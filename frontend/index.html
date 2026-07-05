@@ -1,0 +1,736 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <title>XDir - Offline Game Manager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="static/css/styles.css?v=10">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes splashLoading {
+            0% { left: -50%; }
+            100% { left: 100%; }
+        }
+        .splash-loader-bar {
+            position: relative;
+            width: 240px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 20px auto 0;
+        }
+        .splash-loader-bar::after {
+            content: '';
+            position: absolute;
+            top: 0; left: -50%;
+            width: 50%; height: 100%;
+            background: linear-gradient(90deg, transparent, #3b82f6, #06b6d4, transparent);
+            animation: splashLoading 1.2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <div id="app-splash" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #0b0c10; z-index: 999999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.4s ease, visibility 0.4s ease;">
+        <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 8px;">
+            <div style="background: linear-gradient(135deg, #3b82f6, #06b6d4); width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 800; font-size: 1.5rem; font-family: 'Outfit', sans-serif; box-shadow: 0 8px 24px rgba(59, 130, 246, 0.35);">X</div>
+            <h1 style="color: #f8fafc; font-size: 2.2rem; font-weight: 800; font-family: 'Outfit', sans-serif; letter-spacing: -0.5px; margin: 0;">XDir</h1>
+        </div>
+        <p style="color: #94a3b8; font-size: 0.95rem; margin: 0; font-weight: 500;" id="splash-status">Initializing Local Game Engine...</p>
+        <div class="splash-loader-bar"></div>
+    </div>
+
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+        <div class="nav-left">
+            <button class="logo-badge" id="btn-home-logo" type="button" title="Go to Library">
+                <span class="logo-icon">X</span>
+                <span class="logo-text">XDir</span>
+            </button>
+            <nav class="nav-tabs">
+                <button class="nav-tab active" data-tab="library">
+                    <i data-lucide="grid"></i>
+                    <span>Library</span>
+                </button>
+                <button class="nav-tab" data-tab="extension">
+                    <i data-lucide="puzzle"></i>
+                    <span>Extensions</span>
+                </button>
+                <button class="nav-tab" data-tab="settings">
+                    <i data-lucide="settings"></i>
+                    <span>Settings</span>
+                </button>
+            </nav>
+        </div>
+        <div class="nav-right">
+            <div class="quick-status" id="ext-status-pill" style="cursor: pointer;" title="Click to view extension sync status" onclick="document.querySelector('[data-tab=\'extension\']').click()">
+                <span class="status-dot offline" id="ext-status-dot"></span>
+                <span class="status-label" id="ext-status-label">Extension Offline</span>
+            </div>
+            <div class="quick-status" id="btn-show-tutorial" style="cursor: pointer; background: rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.4);" title="Open Onboarding & Setup Tutorial">
+                <span class="status-dot" style="background: #3b82f6; box-shadow: 0 0 8px #3b82f6;"></span>
+                <span class="status-label" style="color: #60a5fa;">Help & Tutorial</span>
+            </div>
+            <button class="btn-icon" id="btn-add-wishlist" title="Add Game to Wishlist from URL" style="color: #60a5fa; border-color: rgba(96, 165, 250, 0.3); background: rgba(96, 165, 250, 0.1);">
+                <i data-lucide="plus-circle"></i>
+            </button>
+            <div class="window-controls" style="-webkit-app-region: no-drag;">
+                    <button class="btn-win" id="btn-win-min" title="Minimize Window"><i data-lucide="minus"></i></button>
+                    <button class="btn-win" id="btn-win-max" title="Maximize / Restore Window"><i data-lucide="square"></i></button>
+                    <button class="btn-win btn-win-close" id="btn-win-close" title="Close XDir"><i data-lucide="x"></i></button>
+                </div>
+            </div>
+        </header>
+
+        <!-- TAB 1: LIBRARY VIEW -->
+        <main class="view-panel active" id="view-library">
+            <div class="library-layout">
+                <!-- Left Filter Sidebar -->
+                <aside class="filter-sidebar">
+                    <div class="sidebar-header">
+                        <h3>Filters</h3>
+                        <span>Presets, progress, tags and sources</span>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label"><i data-lucide="filter"></i> PRESET</label>
+                        <select class="filter-select" id="filter-preset">
+                            <option value="all">All Games</option>
+                            <option value="available">Available Games (No Wishlist)</option>
+                            <option value="exe">Installed Executables (.exe)</option>
+                            <option value="archive">Archives (.zip / .rar / .7z)</option>
+                            <option value="review">Review Queue (Unidentified)</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label"><i data-lucide="play-circle"></i> Playing Progress</label>
+                        <select class="filter-select" id="filter-progress">
+                            <option value="all">All statuses</option>
+                            <option value="playing">Playing</option>
+                            <option value="completed">Completed</option>
+                            <option value="on_hold">On Hold</option>
+                            <option value="unplayed">Unplayed</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label"><i data-lucide="arrow-up-circle"></i> Updates & Data</label>
+                        <select class="filter-select" id="filter-updates">
+                            <option value="all">All Games</option>
+                            <option value="updates">Update Available</option>
+                            <option value="wishlist">Wishlist Only</option>
+                            <option value="missing_meta">Missing Metadata</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label"><i data-lucide="tag"></i> Tags</label>
+                        <select class="filter-select" id="filter-tag">
+                            <option value="all">All tags</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label"><i data-lucide="globe"></i> Source</label>
+                        <select class="filter-select" id="filter-source">
+                            <option value="all">All sources</option>
+                            <option value="f95zone">F95Zone</option>
+                            <option value="dlsite">DLsite</option>
+                            <option value="itch">Itch.io</option>
+                            <option value="unknown">Local / Unlinked</option>
+                        </select>
+                    </div>
+
+                    <div class="sidebar-stats">
+                        <div class="stat-pill highlight" id="filter-available-card" style="cursor: pointer;" title="View all installed and archived games">
+                            <span class="stat-num" id="stat-total-games">0</span>
+                            <span class="stat-name">Available Games</span>
+                        </div>
+                        <div class="stat-pill highlight" id="filter-wishlist-card" style="cursor: pointer;" title="View wishlist items">
+                            <span class="stat-num" id="stat-wishlist-games">0</span>
+                            <span class="stat-name">Wishlist Games</span>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Main Grid Area -->
+                <section class="library-content">
+                    <div class="content-toolbar">
+                        <div class="search-box">
+                            <i data-lucide="search" class="search-icon"></i>
+                            <input type="text" id="search-input" placeholder="Search games, developers, IDs...">
+                            <button id="clear-search" style="display:none;"><i data-lucide="x"></i></button>
+                        </div>
+
+                        <div class="toolbar-actions">
+                            <span class="results-count" id="results-count">0/0</span>
+                            <select class="sort-select" id="sort-select">
+                                <option value="title">Sort by Title</option>
+                                <option value="date">Date Added to XDir</option>
+                                <option value="rating">Rating Score</option>
+                            </select>
+                            <button class="btn-primary" id="btn-add-game">
+                                <i data-lucide="plus"></i>
+                                <span>Scan Directory</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="games-grid" id="games-grid">
+                        <!-- Dynamic Cards Injected Here -->
+                    </div>
+
+                    <div class="empty-state" id="empty-state" style="display:none;">
+                        <div class="empty-icon"><i data-lucide="folder-search"></i></div>
+                        <h3>No Games Found</h3>
+                        <p>No titles match your selected filters or search terms.</p>
+                        <button class="btn-secondary" onclick="resetFilters()">Reset All Filters</button>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- TAB 2: EXTENSION VIEW -->
+        <main class="view-panel" id="view-extension">
+            <div class="extension-container">
+                <div class="ext-status-banner offline" id="ext-banner-box">
+                    <div class="ext-banner-left">
+                        <i data-lucide="puzzle" id="ext-banner-icon"></i>
+                        <div>
+                            <h3 id="ext-banner-title">Chrome Companion Offline</h3>
+                            <p id="ext-banner-desc">No heartbeat received from Chrome. Please open Chrome and make sure the extension is loaded from your application's extension folder.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ext-hero">
+                    <div class="ext-icon-box"><i data-lucide="puzzle"></i></div>
+                    <div class="ext-hero-text">
+                        <h2>XDir Companion Extension</h2>
+                        <p>Connect your Chrome browser to automatically sync high-resolution covers, screenshots, ratings, and version history from F95zone, DLsite, and Itch.io directly into your standalone offline library.</p>
+                    </div>
+                </div>
+
+                <div class="ext-grid">
+                    <div class="ext-card">
+                        <div class="ext-card-header">
+                            <i data-lucide="chrome" class="accent-icon"></i>
+                            <h3>1. Load Extension in Chrome</h3>
+                        </div>
+                        <p>Our custom Manifest V3 extension is located inside your application folder. It bridges Chrome's active login session with this desktop application.</p>
+                        <div class="path-box" id="ext-path-box">Loading extension path...</div>
+                        <ol class="ext-steps">
+                            <li>Open Chrome and navigate to <code>chrome://extensions</code></li>
+                            <li>Enable <b>Developer mode</b> toggle at top right</li>
+                            <li>Click <b>Load unpacked</b> and select the extension folder above</li>
+                        </ol>
+                    </div>
+
+                    <div class="ext-card">
+                        <div class="ext-card-header">
+                            <i data-lucide="zap" class="accent-icon"></i>
+                            <h3>2. How to Scrape & Sync Metadata</h3>
+                        </div>
+                        <p>Once loaded in Chrome, visit any game thread on F95Zone or product page on DLsite while logged in.</p>
+                        <ul class="ext-features">
+                            <li><i data-lucide="check-circle-2"></i> <b>Instant Library Badge:</b> A sleek floating badge appears in the bottom right of web pages showing if the game is already in your local folder.</li>
+                            <li><i data-lucide="check-circle-2"></i> <b>One-Click Sync:</b> Click the floating badge to instantly scrape cover images, 15+ screenshots, version numbers, and developer circles into this desktop app!</li>
+                            <li><i data-lucide="check-circle-2"></i> <b>Update Alerts:</b> The extension warns you whenever an online version exceeds your local archive build.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="sync-queue-section">
+                    <div class="queue-header">
+                        <h3>Missing Metadata Queue</h3>
+                        <span id="ext-queue-subtitle">Games identified in your library that still need cover images or screenshots</span>
+                    </div>
+                    <div class="queue-list" id="ext-queue-list">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- TAB 3: SETTINGS VIEW -->
+        <main class="view-panel" id="view-settings">
+            <div class="settings-layout">
+                <aside class="settings-sidebar">
+                    <div class="settings-nav-header">
+                        <h3>Settings sections</h3>
+                        <span>Choose a domain to configure.</span>
+                    </div>
+                    <div class="settings-nav-list">
+                        <button class="settings-nav-item active" data-section="media">
+                            <i data-lucide="wand-2"></i>
+                            <div class="set-text">
+                                <h4>Scraper & Metadata Fixer</h4>
+                                <span>Fix titles, covers & screenshots</span>
+                            </div>
+                        </button>
+                        <button class="settings-nav-item" data-section="updates">
+                            <i data-lucide="refresh-cw"></i>
+                            <div class="set-text">
+                                <h4>Game Updates</h4>
+                                <span>Auto-check intervals & sync</span>
+                            </div>
+                        </button>
+                        <button class="settings-nav-item" data-section="system">
+                            <i data-lucide="cpu"></i>
+                            <div class="set-text">
+                                <h4>System & Launch Options</h4>
+                                <span>Archive modes & local paths</span>
+                            </div>
+                        </button>
+                    </div>
+                </aside>
+
+                <section class="settings-content">
+                    <!-- SECTION 1: SCRAPER & METADATA FIXER -->
+                    <div class="set-panel active" id="set-media">
+                        <div class="set-card-main">
+                            <div class="set-card-top">
+                                <div class="set-title-row">
+                                    <i data-lucide="wand-2" class="set-icon-red"></i>
+                                    <h3>Fix Titles & Refetch All Metadata</h3>
+                                </div>
+                                <p class="set-desc">Scan all games in your library to clean up noisy titles (removing bracketed release groups, ugly tags, and version strings) and re-scrape fresh high-definition cover images and 15+ screenshots from your primary provider.</p>
+                            </div>
+                            <div class="form-row">
+                                <label>Primary Scraper Source</label>
+                                <select class="input-dark" id="set-media-scraper">
+                                    <option value="f95zone" selected>F95Zone (Best for Adult RPGM, Ren'Py, Unity, VN Games - Highest Accuracy)</option>
+                                    <option value="dlsite">DLsite (Best for Japanese Doujin / RJ Codes)</option>
+                                    <option value="itch">Itch.io (Best for Western Indie & Demo titles)</option>
+                                </select>
+                            </div>
+                            <div class="set-actions-row" style="margin-top: 24px; display: flex; flex-direction: column; gap: 12px;">
+                                <button class="btn-primary" id="btn-fix-metadata" style="padding: 14px 20px; font-size: 1rem; justify-content: center;">
+                                    <i data-lucide="wand-2"></i>
+                                    <span>Fix Titles & Refetch All Metadata (Covers, Screenshots & Titles)</span>
+                                </button>
+                                <button class="btn-secondary" id="btn-rematch-f95" style="padding: 12px 18px; justify-content: center;">
+                                    <i data-lucide="search"></i>
+                                    <span>Rematch Unidentified Games from F95Zone</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 2: GAME UPDATES -->
+                    <div class="set-panel" id="set-updates">
+                        <div class="set-card-main">
+                            <div class="set-card-top">
+                                <div class="set-title-row">
+                                    <i data-lucide="refresh-cw" class="set-icon-red"></i>
+                                    <h3>Background Sync & Health</h3>
+                                </div>
+                                <p class="set-desc">Control how aggressively XDir refreshes library metadata and track how many titles still need review or online sync.</p>
+                            </div>
+                            <div class="set-toggle-row">
+                                <label class="switch">
+                                    <input type="checkbox" id="toggle-auto-update" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                                <div class="toggle-text">
+                                    <h4>Keep linked games metadata fresh in the background</h4>
+                                    <span>Allows XDir to prioritize metadata refresh flows for already linked titles.</span>
+                                </div>
+                            </div>
+                            <div class="set-status-box">
+                                <div class="stat-col">
+                                    <span class="lbl">Preferred Scraper</span>
+                                    <span class="badge-dark" id="set-stat-source">F95ZONE</span>
+                                </div>
+                                <div class="stat-col">
+                                    <span class="lbl">Wishlist Queue</span>
+                                    <span class="badge-dark" id="set-stat-updates">0</span>
+                                </div>
+                                <div class="stat-col">
+                                    <span class="lbl">Needs Review</span>
+                                    <span class="badge-red" id="set-stat-queue">0 games</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 3: SYSTEM & LAUNCH OPTIONS -->
+                    <div class="set-panel" id="set-system">
+                        <div class="set-card-main">
+                            <div class="set-card-top">
+                                <div class="set-title-row">
+                                    <i data-lucide="cpu" class="set-icon-red"></i>
+                                    <h3>Library Stability & Launch Behavior</h3>
+                                </div>
+                                <p class="set-desc">Tune startup behavior, make directory tracking more resilient, and control how XDir opens archives and local folders.</p>
+                            </div>
+                            <div class="set-toggle-row">
+                                <label class="switch">
+                                    <input type="checkbox" id="toggle-startup-scan" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                                <div class="toggle-text">
+                                    <h4>Run a background scan when XDir starts</h4>
+                                    <span>Turn this off if you want the fastest startup and prefer manual rescans.</span>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <label>Archive Extraction Mode</label>
+                                <select class="input-dark" id="set-launch-archive-mode">
+                                    <option value="explorer">Open Archive in Windows Explorer / WinRAR / 7-Zip (Instant)</option>
+                                    <option value="extract">Extract Temporary Sandboxed Copy Before Launching</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <label>Missing Game Grace Period</label>
+                                <input type="number" min="1" max="10" step="1" id="setting-missing-grace-scans" class="input-dark" placeholder="3">
+                                <span class="set-help">How many consecutive missed scans are allowed before XDir removes a missing entry from the library.</span>
+                            </div>
+                            <div class="form-row">
+                                <label>Primary Game Setups Directory</label>
+                                <div style="display: flex; gap: 8px; width: 100%;">
+                                    <input type="text" id="setting-games-dir" placeholder="e.g. C:\Games or D:\Game setups" class="input-dark" style="flex: 1;">
+                                    <button class="btn-secondary" id="btn-browse-dir" style="padding: 0 16px; white-space: nowrap;">Browse...</button>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <label>Local API Server URL</label>
+                                <input type="text" value="http://127.0.0.1:8765" readonly class="input-dark">
+                            </div>
+                            <div class="set-actions-row">
+                                <button class="btn-primary" id="btn-save-preferences">
+                                    <i data-lucide="save"></i>
+                                    <span>Save Preferences & Rescan</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- FULL-WINDOW GAME OVERVIEW PAGE -->
+        <div class="overview-modal" id="overview-modal" style="display:none;">
+            <header class="overview-topbar">
+                <button class="btn-back" id="overview-back">
+                    <i data-lucide="arrow-left"></i>
+                    <span>OVERVIEW</span>
+                </button>
+                <div class="overview-title-top" id="ov-title-top">Eternum</div>
+                <div class="overview-pag">
+                    <span id="ov-page-num">1 of 1</span>
+                </div>
+            </header>
+
+            <div class="overview-scroll">
+                <!-- Massive Hero Banner -->
+                <div class="ov-hero" id="ov-hero">
+                    <div class="ov-hero-bg" id="ov-hero-bg"></div>
+                    <div class="ov-hero-overlay"></div>
+
+                    <div class="ov-hero-content">
+                        <div class="ov-hero-left">
+                            <div class="ov-pills-row">
+                                <button id="ov-btn-translate" style="cursor:pointer; border:none; font-family:inherit; font-weight:700; background: rgba(59, 130, 246, 0.2); color: #93c5fd; padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 5px;"><i data-lucide="languages" style="width:14px;height:14px;"></i><span>Translate</span></button>
+                                <button class="ov-pill-update" id="ov-badge-update" style="display:none; cursor:pointer; border:none; font-family:inherit; font-weight:700;" title="Click to open download page for this update">UPDATE AVAILABLE</button>
+                                <span class="ov-pill-data" id="ov-badge-version">DATA: V1.0</span>
+                                <span class="ov-pill-date" id="ov-badge-date">RELEASED: N/A</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <h1 class="ov-game-title" id="ov-title">Game Title</h1>
+                                <button id="ov-btn-copy-title" title="Copy Title to Clipboard" style="background:transparent; border:none; color:rgba(255,255,255,0.7); cursor:pointer; display:flex; align-items:center; padding:4px;"><i data-lucide="copy" style="width: 18px; height: 18px;"></i></button>
+                                <button id="ov-btn-edit-title" title="Rename Title" style="background:transparent; border:none; color:rgba(255,255,255,0.7); cursor:pointer; display:flex; align-items:center; padding:4px;"><i data-lucide="pencil" style="width:16px;height:16px;"></i></button>
+                            </div>
+                            <div class="ov-developer-line">
+                                <span id="ov-dev">Developer: Unknown</span> <span class="dot-sep">&bull;</span> <span id="ov-engine">Engine: Ren'Py / Unity</span>
+                            </div>
+                        </div>
+
+                        <div class="ov-hero-right">
+                            <div class="ov-control-box">
+                                <div class="control-header">
+                                    <span>LIBRARY CONTROLS</span>
+                                    <i data-lucide="gamepad-2"></i>
+                                </div>
+                                <h4>Play, track, manage</h4>
+                                <div class="control-actions">
+                                    <button class="btn-launch-big" id="ov-btn-launch">
+                                        <i data-lucide="play"></i>
+                                        <span id="ov-launch-text">Launch</span>
+                                    </button>
+                                    <button class="btn-folder-icon" id="ov-btn-folder" title="Open containing folder in Windows Explorer">
+                                        <i data-lucide="folder"></i>
+                                    </button>
+                                    <button class="btn-fetch-info" id="ov-btn-fetch" title="Scrape cover image, screenshots, tags, and developer directly from DLsite/F95zone/Itch">
+                                        <i data-lucide="download-cloud"></i>
+                                        <span id="ov-fetch-text">Fetch Info</span>
+                                    </button>
+                                </div>
+                                <div class="control-footer">
+                                    <span>Folder: <b id="ov-path-short">D:\...</b></span>
+                                    <span>Type: <b id="ov-type-text">EXE</b></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4 Statistical Metric Cards -->
+                <div class="ov-metrics-row">
+                    <div class="metric-card" style="position: relative;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span class="metric-lbl">MY SCORE</span>
+                            <button id="ov-clear-star" title="Clear Rating" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; cursor: pointer; display: none;">Clear &times;</button>
+                        </div>
+                        <div class="metric-val-row" style="margin-top: 4px; gap: 12px; align-items: center;">
+                            <div id="user-star-picker" style="display: flex; gap: 4px; align-items: center;">
+                                <span class="user-star-btn" data-val="1" title="Rate 1 Star" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
+                                <span class="user-star-btn" data-val="2" title="Rate 2 Stars" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
+                                <span class="user-star-btn" data-val="3" title="Rate 3 Stars" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
+                                <span class="user-star-btn" data-val="4" title="Rate 4 Stars" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
+                                <span class="user-star-btn" data-val="5" title="Rate 5 Stars" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
+                            </div>
+                            <span class="score-num" id="ov-score-num" style="font-size: 1.3rem; font-weight: 800; color: #f8fafc;">N/A</span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-lbl">PLATFORM SCORES</span>
+                        <div class="metric-val-row">
+                            <span class="platform-badge" id="ov-source-name">LOCAL</span>
+                            <span class="score-num" id="ov-platform-score">N/A</span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-lbl">LIBRARY STATE</span>
+                        <div class="metric-val-row">
+                            <select class="state-select" id="ov-progress-select">
+                                <option value="unplayed">Unplayed</option>
+                                <option value="playing">Playing Now</option>
+                                <option value="completed">Completed</option>
+                                <option value="on_hold">On Hold</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-lbl">FOLDER SIZE & PATH</span>
+                        <div class="metric-val-row">
+                            <span class="size-text" id="ov-size-text">Archive / Executable Folder</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ov-summary-grid">
+                    <div class="ov-cover-card" id="ov-cover-card">
+                        <div class="ov-cover-frame">
+                            <img id="ov-cover-image" src="" alt="Game cover" referrerpolicy="no-referrer">
+                            <div class="ov-cover-fallback" id="ov-cover-fallback">X</div>
+                        </div>
+                        <div class="ov-cover-meta">
+                            <span class="section-subtitle">INSTALL LOCATION</span>
+                            <div class="ov-folder-full" id="ov-folder-full">D:\Games\Example</div>
+                        </div>
+                    </div>
+
+                    <div class="ov-section-card">
+                        <div class="section-top">
+                            <h3>About & Tags</h3>
+                        </div>
+                        <div class="tag-cloud" id="ov-tag-cloud">
+                            <!-- Tags injected -->
+                        </div>
+                        
+                        <div class="custom-tag-input-row">
+                            <span>Custom Tags <i data-lucide="eye"></i></span>
+                            <div class="tag-input-box">
+                                <input type="text" id="ov-new-tag-input" placeholder="Add a tag...">
+                                <button id="ov-btn-add-tag">Add</button>
+                            </div>
+                        </div>
+
+                        <div class="desc-section">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                <h4 style="margin:0;">Description</h4>
+                                <button class="btn-xs" id="ov-btn-fetch-desc" style="font-size:0.75rem; padding:5px 12px; display:none; border:1px solid var(--primary); color:var(--text-light); background:var(--primary); border-radius:6px; cursor:pointer; align-items:center; gap:5px; font-weight:600;"><i data-lucide="zap" style="width:14px;height:14px;"></i> Retrieve Metadata & Description</button>
+                            </div>
+                            <p id="ov-description">No description available. Click above or use Chrome extension to scrape from F95zone/DLsite!</p>
+                        </div>
+                    </div>
+
+                    <div class="ov-section-card">
+                        <div class="section-top">
+                            <h3>Library Snapshot</h3>
+                        </div>
+                        <div class="ov-meta-list">
+                            <div class="ov-meta-row"><span>Local Version</span><b id="ov-local-version-text">N/A</b></div>
+                            <div class="ov-meta-row"><span>Latest Version</span><b id="ov-latest-version-text">N/A</b></div>
+                            <div class="ov-meta-row"><span>Added</span><b id="ov-added-at-text">N/A</b></div>
+                            <div class="ov-meta-row"><span>Last Seen</span><b id="ov-last-seen-text">N/A</b></div>
+                            <div class="ov-meta-row"><span>Missing Tolerance</span><b id="ov-missing-status-text">Stable</b></div>
+                        </div>
+
+                        <div class="section-top" style="margin-top: 8px;">
+                            <h3>Game Sources</h3>
+                        </div>
+                        <div class="source-list" id="ov-source-list">
+                            <!-- Source card injected -->
+                        </div>
+
+                        <div class="source-actions" id="ov-source-actions">
+                            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:8px;">
+                                <button class="src-action-btn src-btn-f95" id="ov-btn-fetch-f95" title="Auto-fetch from F95Zone" style="padding:10px 5px; flex-direction:column; gap:6px; height:auto; justify-content:center;">
+                                    <i data-lucide="search"></i><span style="font-size:0.8rem; font-weight:700;">F95Zone</span>
+                                </button>
+                                <button class="src-action-btn src-btn-dlsite" id="ov-btn-search-dlsite" title="Search on DLsite" style="padding:10px 5px; flex-direction:column; gap:6px; height:auto; justify-content:center;">
+                                    <i data-lucide="external-link"></i><span style="font-size:0.8rem; font-weight:700;">DLsite</span>
+                                </button>
+                                <button class="src-action-btn src-btn-itch" id="ov-btn-search-itch" title="Search on Itch.io" style="padding:10px 5px; flex-direction:column; gap:6px; height:auto; justify-content:center;">
+                                    <i data-lucide="external-link"></i><span style="font-size:0.8rem; font-weight:700;">Itch.io</span>
+                                </button>
+                            </div>
+                            <button class="src-action-btn src-btn-link" id="ov-btn-link-source" title="Manually paste a DLsite, F95Zone, or Itch.io URL to link this game">
+                                <i data-lucide="link"></i>
+                                <span>Link Source URL</span>
+                            </button>
+                            <button class="src-action-btn src-btn-wrong" id="ov-btn-mark-wrong" title="Clear current source data" style="margin-top:8px;">
+                                <i data-lucide="alert-triangle"></i>
+                                <span>Clear Data</span>
+                            </button>
+                            <button class="src-action-btn src-btn-wrong" id="ov-btn-ignore" title="Hide this game or mod from the library completely" style="margin-top:8px; background: rgba(220, 38, 38, 0.1); border-color: rgba(220, 38, 38, 0.3); color: #fca5a5;">
+                                <i data-lucide="eye-off"></i>
+                                <span>Ignore / Hide Game</span>
+                            </button>
+                        </div>
+
+                        <div class="source-link-form" id="ov-link-form" style="display:none;">
+                            <label class="link-form-label">Paste a DLsite, F95Zone, Itch.io, or Steam URL:</label>
+                            <div class="link-form-row">
+                                <input type="text" id="ov-link-url-input" class="input-dark" placeholder="https://f95zone.to/threads/12345/ or RJ01234567">
+                                <button class="btn-primary" id="ov-btn-submit-link">
+                                    <i data-lucide="check"></i>
+                                    <span>Link & Fetch</span>
+                                </button>
+                                <button class="btn-secondary" id="ov-btn-cancel-link">
+                                    <i data-lucide="x"></i>
+                                </button>
+                            </div>
+                            <div class="link-form-hint">
+                                Accepts: <span class="hint-tag">f95zone.to/threads/...</span> <span class="hint-tag">dlsite.com/.../RJ...</span> <span class="hint-tag">RJ01234567</span> <span class="hint-tag">*.itch.io/...</span> <span class="hint-tag">steampowered.com/app/...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ov-section">
+                    <div class="ov-section-card">
+                        <div class="section-top">
+                            <div>
+                                <span class="section-subtitle">MEDIA GALLERY</span>
+                                <h3>Screenshots</h3>
+                            </div>
+                            <span class="count-badge" id="ov-gallery-count">0</span>
+                        </div>
+                        <div class="gallery-grid" id="ov-gallery">
+                            <!-- Injected dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ov-detail-grid">
+                    <div class="ov-section-card">
+                        <div class="section-top">
+                            <div>
+                                <span class="section-subtitle">JOURNAL</span>
+                                <h3>Activity & Journal</h3>
+                            </div>
+                            <button class="btn-add-entry" id="ov-btn-add-journal">
+                                <i data-lucide="plus"></i> Add Entry
+                            </button>
+                        </div>
+                        <div class="journal-list" id="ov-journal-list">
+                            <div class="journal-empty">
+                                <i data-lucide="file-text"></i>
+                                <h4>No journal entries yet</h4>
+                                <p>Start documenting your gameplay experience or patch notes.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="ov-section-card" id="ov-archive-inspector" style="display:none;">
+                        <div class="section-top">
+                            <h3>Archive Contents</h3>
+                        </div>
+                        <div class="archive-file-list" id="ov-archive-list">
+                            <!-- Files listed -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lightbox for Screenshots -->
+        <div class="lightbox-modal" id="lightbox-modal" style="display:none;">
+            <button class="lightbox-close" id="lightbox-close"><i data-lucide="x"></i></button>
+            <img id="lightbox-img" src="" alt="Fullscreen screenshot" referrerpolicy="no-referrer">
+        </div>
+
+        <!-- ONBOARDING & SETUP TUTORIAL MODAL -->
+        <div class="overview-modal" id="onboarding-modal" style="display:none; z-index: 9999; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);">
+            <div class="ov-content" style="max-width: 850px; margin: 40px auto; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 32px; box-shadow: 0 20px 50px rgba(0,0,0,0.8);">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="background: var(--primary); color: #fff; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 1.2rem;">XDir</span>
+                        <h2 style="margin: 0; font-size: 1.6rem; color: #f8fafc;">Welcome to XDir Offline Game Manager</h2>
+                    </div>
+                    <button class="btn-icon" id="btn-close-onboarding" style="background: transparent; border: none; color: #94a3b8; font-size: 1.5rem; cursor: pointer;"><i data-lucide="x"></i></button>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 24px; color: #cbd5e1; font-size: 0.95rem; line-height: 1.6;">
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); padding: 20px; border-radius: 8px;">
+                        <h3 style="color: #60a5fa; margin-top: 0; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="folder-open"></i>
+                            <span>1. How Your Game Directory Should Look</span>
+                        </h3>
+                        <p style="margin-top: 0;">XDir automatically scans and organizes your standalone PC games, visual novels, and archives. For best results, organize your configured <b>Primary Game Setups Directory</b> as follows:</p>
+                        <ul style="margin-bottom: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+                            <li><b>Individual Folders:</b> Each game should be in its own subfolder containing the executable or game files.</li>
+                            <li><b>Compressed Archives:</b> Standalone <code>.zip</code>, <code>.rar</code>, <code>.7z</code>, or <code>.iso</code> archives are supported directly. XDir can launch or extract them on demand!</li>
+                            <li><b>Category Folders (Optional):</b> You can group games into subfolders like <code>\F95\</code>, <code>\DLsite\</code>, or <code>\Itch\</code> if you like.</li>
+                        </ul>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); padding: 20px; border-radius: 8px;">
+                        <h3 style="color: #34d399; margin-top: 0; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="puzzle"></i>
+                            <span>2. Manage & Load the Companion Extension</span>
+                        </h3>
+                        <p style="margin-top: 0;">To unlock automatic metadata scraping (high-res covers, 15+ screenshots, community ratings, and live wishlist syncing from F95zone, DLsite, and Itch.io), install the bundled Chrome extension:</p>
+                        <div style="background: #000; border: 1px solid #333; padding: 10px 14px; border-radius: 6px; font-family: monospace; color: #a7f3d0; margin: 10px 0; user-select: all;" id="onboarding-ext-path">Loading extension path...</div>
+                        <ol style="margin-bottom: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px;">
+                            <li>Open Google Chrome and navigate to <code>chrome://extensions</code></li>
+                            <li>Toggle on <b>Developer mode</b> in the top right corner.</li>
+                            <li>Click <b>Load unpacked</b> and select the extension folder shown above.</li>
+                        </ol>
+                    </div>
+
+                    <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <b style="color: #fff;">Ready to customize your library path?</b>
+                            <div style="font-size: 0.85rem; color: #93c5fd;">You can change your Primary Game Setups Directory anytime in the Settings tab!</div>
+                        </div>
+                        <button class="btn-primary" id="btn-onboarding-got-it" style="padding: 10px 24px; background: #3b82f6; color: #fff; font-weight: 700; border-radius: 6px; border: none; cursor: pointer; transition: background 0.2s;">Got it! Start Using XDir</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="static/js/app.js?v=6"></script>
+</body>
+</html>
+
+

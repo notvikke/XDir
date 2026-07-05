@@ -1,0 +1,6 @@
+fastapi>=0.111
+uvicorn>=0.30
+SQLAlchemy>=2.0
+requests>=2.32
+beautifulsoup4>=4.12
+pywebview>=5.1

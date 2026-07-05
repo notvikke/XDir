@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>XDir Extension</title>
+    <style>
+        body {
+            width: 300px;
+            padding: 16px;
+            background: #0f1115;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+        }
+        .logo {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #ff0080, #7928ca);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .header-text h3 {
+            margin: 0;
+            font-size: 15px;
+        }
+        .header-text span {
+            font-size: 11px;
+            color: #a0aec0;
+        }
+        .status-box {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00e676;
+            box-shadow: 0 0 8px #00e676;
+        }
+        .dot.offline {
+            background: #ff1744;
+            box-shadow: 0 0 8px #ff1744;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 6px;
+            padding: 8px;
+            text-align: center;
+        }
+        .stat-val {
+            font-size: 18px;
+            font-weight: bold;
+            color: #a5b4fc;
+        }
+        .stat-label {
+            font-size: 10px;
+            color: #718096;
+            text-transform: uppercase;
+        }
+        .btn {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #ff0080, #7928ca);
+            border: none;
+            color: #fff;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">XL</div>
+        <div class="header-text">
+            <h3>XDir Companion</h3>
+            <span>Offline Game Manager</span>
+        </div>
+    </div>
+
+    <div class="status-box">
+        <div class="status-indicator">
+            <div class="dot" id="dot"></div>
+            <span id="status-text">Checking App...</span>
+        </div>
+        <span style="font-size: 11px; color: #718096;">Port 8765</span>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-val" id="val-total">0</div>
+            <div class="stat-label">Total Games</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-val" id="val-updates">0</div>
+            <div class="stat-label">Updates</div>
+        </div>
+    </div>
+
+    <button class="btn" id="btn-sync">Open Standalone App URL</button>
+
+    <script src="popup.js"></script>
+</body>
+</html>

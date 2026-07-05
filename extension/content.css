@@ -1,0 +1,78 @@
+#xdir-extension-badge {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 999999;
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: rgba(17, 19, 25, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 14px;
+    padding: 12px 18px;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.75), 0 0 20px rgba(121, 40, 202, 0.3);
+    backdrop-filter: blur(12px);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
+    user-select: none;
+}
+
+#xdir-extension-badge:hover {
+    transform: translateY(-4px) scale(1.02);
+    border-color: rgba(255, 0, 128, 0.6);
+    box-shadow: 0 20px 44px rgba(0, 0, 0, 0.85), 0 0 28px rgba(255, 0, 128, 0.4);
+}
+
+.xdir-badge-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #ff0080 0%, #7928ca 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 14px;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(255, 0, 128, 0.4);
+}
+
+.xdir-badge-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.xdir-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.xdir-subtitle {
+    font-size: 11px;
+    color: #a0aec0;
+    margin-top: 2px;
+}
+
+.xdir-status-pill {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.xdir-pill-exe { background: #00e676; color: #000; }
+.xdir-pill-archive { background: #ffab00; color: #000; }
+.xdir-pill-update { background: #ff1744; color: #fff; animation: xdir-pulse 1.5s infinite; }
+
+@keyframes xdir-pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+    100% { transform: scale(1); }
+}

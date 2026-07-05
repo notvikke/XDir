@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "XDir Library Companion",
+  "version": "1.0.0",
+  "description": "Companion browser extension for XDir Library offline game manager. Scrapes F95zone, DLsite, and Itch.io metadata.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "activeTab",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://f95zone.to/*",
+    "https://www.dlsite.com/*",
+    "https://*.itch.io/*",
+    "https://store.steampowered.com/*",
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://f95zone.to/*",
+        "https://www.dlsite.com/*",
+        "https://*.itch.io/*"
+      ],
+      "js": [
+        "parsers/f95zone.js",
+        "parsers/dlsite.js",
+        "parsers/itch.js",
+        "content_script.js"
+      ],
+      "css": ["content.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "XDir Library Companion"
+  },
+  "icons": {
+    "128": "icon128.png"
+  }
+}

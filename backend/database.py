@@ -1,0 +1,167 @@
+import os
+from datetime import datetime
+from typing import List, Optional
+from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, ForeignKey, create_engine, text
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+
+DB_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "library.db")
+DATABASE_URL = f"sqlite:///{DB_PATH}"
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+class Game(Base):
+    __tablename__ = "games"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True, nullable=False)
+    raw_name = Column(String, nullable=False)
+    category = Column(String, index=True, default="General")
+    folder_path = Column(String, unique=True, index=True, nullable=False)
+    file_type = Column(String, default="exe")  # "exe", "archive", "folder"
+    archive_name = Column(String, nullable=True)
+    size_bytes = Column(Integer, default=0)
+    
+    # Metadata identification
+    source_type = Column(String, default="unknown")  # "f95zone", "dlsite", "itch", "steam", "unknown"
+    source_url = Column(String, nullable=True)
+    source_id = Column(String, index=True, nullable=True)
+    is_identified = Column(Boolean, default=False)
+    
+    # Versioning & Updates
+    local_version = Column(String, nullable=True)
+    latest_version = Column(String, nullable=True)
+    update_available = Column(Boolean, default=False)
+    
+    # Rich details
+    rating = Column(String, nullable=True)
+    developer = Column(String, nullable=True)
+    release_date = Column(String, nullable=True)
+    cover_url = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    
+    # User status & tracking (XLibrary style)
+    playing_progress = Column(String, default="unplayed")  # "unplayed", "playing", "completed", "on_hold"
+    user_score = Column(String, nullable=True)  # user star rating
+    is_ignored = Column(Boolean, default=False)
+    missing_scan_count = Column(Integer, default=0)
+    
+    # Timestamps
+    added_at = Column(DateTime, default=datetime.utcnow)
+    last_played = Column(DateTime, nullable=True)
+    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    screenshots = relationship("Screenshot", back_populates="game", cascade="all, delete-orphan")
+    tags = relationship("Tag", back_populates="game", cascade="all, delete-orphan")
+    custom_tags = relationship("CustomTag", back_populates="game", cascade="all, delete-orphan")
+    journal_entries = relationship("JournalEntry", back_populates="game", cascade="all, delete-orphan")
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "raw_name": self.raw_name,
+            "category": self.category,
+            "folder_path": self.folder_path,
+            "file_type": self.file_type,
+            "archive_name": self.archive_name,
+            "size_bytes": self.size_bytes,
+            "source_type": self.source_type,
+            "source_url": self.source_url,
+            "source_id": self.source_id,
+            "is_identified": self.is_identified,
+            "local_version": self.local_version,
+            "latest_version": self.latest_version,
+            "update_available": self.update_available,
+            "rating": self.rating,
+            "developer": self.developer,
+            "release_date": self.release_date,
+            "cover_url": self.cover_url,
+            "description": self.description,
+            "playing_progress": self.playing_progress or "unplayed",
+            "user_score": self.user_score,
+            "is_ignored": self.is_ignored,
+            "missing_scan_count": self.missing_scan_count or 0,
+            "added_at": self.added_at.isoformat() if self.added_at else None,
+            "last_played": self.last_played.isoformat() if self.last_played else None,
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
+            "screenshots": [s.url for s in self.screenshots],
+            "tags": [t.tag_name for t in self.tags],
+            "custom_tags": [ct.tag_name for ct in self.custom_tags],
+            "journal_entries": [{"id": j.id, "text": j.entry_text, "date": j.created_at.strftime("%b %d, %Y %H:%M")} for j in self.journal_entries]
+        }
+
+class Screenshot(Base):
+    __tablename__ = "screenshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=False)
+    url = Column(String, nullable=False)
+    local_path = Column(String, nullable=True)
+
+    game = relationship("Game", back_populates="screenshots")
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=False)
+    tag_name = Column(String, index=True, nullable=False)
+
+    game = relationship("Game", back_populates="tags")
+
+class CustomTag(Base):
+    __tablename__ = "custom_tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=False)
+    tag_name = Column(String, index=True, nullable=False)
+
+    game = relationship("Game", back_populates="custom_tags")
+
+class JournalEntry(Base):
+    __tablename__ = "journal_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=False)
+    entry_text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    game = relationship("Game", back_populates="journal_entries")
+
+def init_db():
+    Base.metadata.create_all(bind=engine)
+    # Lightweight migration for existing SQLite databases
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN playing_progress VARCHAR DEFAULT 'unplayed'"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN user_score VARCHAR"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN is_ignored BOOLEAN DEFAULT 0"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN missing_scan_count INTEGER DEFAULT 0"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN last_seen_at DATETIME"))
+            conn.execute(text("UPDATE games SET last_seen_at = COALESCE(last_seen_at, added_at, CURRENT_TIMESTAMP)"))
+        except Exception:
+            pass
+        conn.commit()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
