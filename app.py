@@ -17,14 +17,15 @@ from backend.main import app as fastapi_app
 from backend.database import init_db, SessionLocal
 from backend.ingest import run_ingestion, deduplicate_games
 from backend.config import get_settings
-from backend.runtime import get_app_root
+from backend.runtime import get_app_root, get_bundle_root
 
 PORT = 8765
 SERVER_URL = f"http://127.0.0.1:{PORT}/"
 APP_USER_MODEL_ID = "XDir.Library"
 APP_ICON_RELATIVE_PATH = os.path.join("extension", "icon128.png")
 APP_ROOT = get_app_root()
-APP_ICON_PATH = os.path.join(APP_ROOT, APP_ICON_RELATIVE_PATH)
+BUNDLE_ROOT = get_bundle_root()
+APP_ICON_PATH = os.path.join(BUNDLE_ROOT, APP_ICON_RELATIVE_PATH)
 
 def configure_windows_shell_identity():
     try:

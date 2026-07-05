@@ -136,3 +136,32 @@ test('frozen builds resolve config and database paths from the app runtime root'
     'Expected the SQLite library path to resolve from the app runtime root in frozen builds.',
   );
 });
+
+test('frozen builds resolve bundled frontend and extension assets from the PyInstaller bundle root', () => {
+  const runtimePy = fs.readFileSync('backend/runtime.py', 'utf8');
+  assert(
+    runtimePy.includes('def get_bundle_root() -> str:'),
+    'Expected a dedicated runtime helper for locating bundled read-only assets in frozen builds.',
+  );
+  assert(
+    runtimePy.includes('meipass = getattr(sys, "_MEIPASS", None)'),
+    'Expected frozen bundle asset lookup to prefer the PyInstaller _MEIPASS directory.',
+  );
+  assert(
+    mainPy.includes('from backend.runtime import get_app_root, get_bundle_root'),
+    'Expected backend startup to import both runtime-root helpers.',
+  );
+  assert(
+    mainPy.includes('BUNDLE_ROOT = get_bundle_root()'),
+    'Expected backend startup to resolve a dedicated bundle root for packaged frontend assets.',
+  );
+  assert(
+    mainPy.includes('FRONTEND_DIR = os.path.join(BUNDLE_ROOT, "frontend")') &&
+      mainPy.includes('EXTENSION_DIR = os.path.join(BUNDLE_ROOT, "extension")'),
+    'Expected frontend and extension assets to resolve from the bundle root in frozen builds.',
+  );
+  assert(
+    appPy.includes('APP_ICON_PATH = os.path.join(BUNDLE_ROOT, APP_ICON_RELATIVE_PATH)'),
+    'Expected the desktop app icon to be loaded from the bundled asset root instead of the writable app root.',
+  );
+});

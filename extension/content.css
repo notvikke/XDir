@@ -8,7 +8,7 @@
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 14px;
     padding: 12px 18px;
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.75), 0 0 20px rgba(121, 40, 202, 0.3);
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.75), 0 0 20px rgba(59, 130, 246, 0.24);
     backdrop-filter: blur(12px);
     color: #fff;
     display: flex;
@@ -21,22 +21,17 @@
 
 #xdir-extension-badge:hover {
     transform: translateY(-4px) scale(1.02);
-    border-color: rgba(255, 0, 128, 0.6);
-    box-shadow: 0 20px 44px rgba(0, 0, 0, 0.85), 0 0 28px rgba(255, 0, 128, 0.4);
+    border-color: rgba(59, 130, 246, 0.6);
+    box-shadow: 0 20px 44px rgba(0, 0, 0, 0.85), 0 0 28px rgba(59, 130, 246, 0.35);
 }
 
 .xdir-badge-icon {
     width: 36px;
     height: 36px;
     border-radius: 10px;
-    background: linear-gradient(135deg, #ff0080 0%, #7928ca 100%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 800;
-    font-size: 14px;
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(255, 0, 128, 0.4);
+    display: block;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
 }
 
 .xdir-badge-text {

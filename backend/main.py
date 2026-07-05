@@ -12,12 +12,13 @@ from backend.database import get_db, init_db, Game, Screenshot, Tag, CustomTag, 
 from backend.scanner import inspect_archive
 from backend.ingest import run_ingestion, determine_source_info
 from backend.config import get_settings, save_settings, get_games_dir
-from backend.runtime import get_app_root
+from backend.runtime import get_app_root, get_bundle_root
 
 app = FastAPI(title="XDir API", version="1.0.0")
 APP_ROOT = get_app_root()
-EXTENSION_DIR = os.path.join(APP_ROOT, "extension")
-FRONTEND_DIR = os.path.join(APP_ROOT, "frontend")
+BUNDLE_ROOT = get_bundle_root()
+EXTENSION_DIR = os.path.join(BUNDLE_ROOT, "extension")
+FRONTEND_DIR = os.path.join(BUNDLE_ROOT, "frontend")
 
 TRUSTED_LOCAL_ORIGINS = [
     "http://127.0.0.1:8765",

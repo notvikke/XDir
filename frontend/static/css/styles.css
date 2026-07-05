@@ -103,14 +103,7 @@ body {
     width: 34px;
     height: 34px;
     border-radius: 8px;
-    background-color: var(--accent-red);
-    color: #fff;
-    font-family: var(--font-heading);
-    font-size: 1.2rem;
-    font-weight: 800;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: block;
     box-shadow: 0 4px 14px var(--accent-glow);
 }
 
@@ -714,12 +707,17 @@ body {
     width: 72px;
     height: 72px;
     border-radius: 16px;
-    background: var(--accent-red);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 2rem;
     box-shadow: 0 8px 24px var(--accent-glow);
+}
+
+.ext-icon-box img {
+    width: 72px;
+    height: 72px;
+    border-radius: 16px;
+    display: block;
 }
 
 .ext-hero-text h2 {
