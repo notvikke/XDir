@@ -68,6 +68,8 @@ The packaged executable is produced at:
 dist\XDir\XDir.exe
 ```
 
+Release uploads should ship the full packaged folder as a `.zip`, because the executable depends on adjacent bundled runtime files.
+
 ## Browser extension
 
 The bundled extension lives in `extension/`. Load it as an unpacked Chromium-based extension to sync metadata from supported sites.
