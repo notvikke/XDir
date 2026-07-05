@@ -3,9 +3,12 @@ from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, ForeignKey, create_engine, text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from backend.runtime import get_app_root
 
-DB_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "library.db")
+DB_PATH = os.path.join(get_app_root(), "backend", "library.db")
 DATABASE_URL = f"sqlite:///{DB_PATH}"
+
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

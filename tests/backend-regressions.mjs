@@ -1,7 +1,10 @@
 import fs from 'fs';
 
 const appPy = fs.readFileSync('app.py', 'utf8');
+const configPy = fs.readFileSync('backend/config.py', 'utf8');
+const databasePy = fs.readFileSync('backend/database.py', 'utf8');
 const mainPy = fs.readFileSync('backend/main.py', 'utf8');
+const specFile = fs.readFileSync('XDir.spec', 'utf8');
 
 function assert(condition, message) {
   if (!condition) {
@@ -86,5 +89,50 @@ test('localhost API is not left open to arbitrary web origins in release builds'
   assert(
     mainPy.includes('return JSONResponse(status_code=403, content={"detail": "Forbidden origin"})'),
     'Expected untrusted cross-origin requests to be rejected with HTTP 403.',
+  );
+});
+
+test('desktop entry point assigns an explicit Windows app identity and custom taskbar icon', () => {
+  assert(
+    appPy.includes('SetCurrentProcessExplicitAppUserModelID'),
+    'Expected app startup to assign a stable Windows AppUserModelID instead of inheriting pythonw.exe identity.',
+  );
+  assert(
+    appPy.includes('window.gui.Icon = icon_obj'),
+    'Expected the native webview window to receive a custom icon for taskbar/titlebar display.',
+  );
+  assert(
+    appPy.includes('APP_ICON_RELATIVE_PATH = os.path.join("extension", "icon128.png")'),
+    'Expected the desktop app to reuse a bundled icon asset instead of the Python default icon.',
+  );
+});
+
+test('windows packaging config exists for generating a branded exe release', () => {
+  assert(
+    specFile.includes("name='XDir'"),
+    'Expected a PyInstaller spec file that builds an executable named XDir.',
+  );
+  assert(
+    specFile.includes("icon='XDir.ico'"),
+    'Expected the Windows release build to stamp the executable with the XDir icon.',
+  );
+  assert(
+    specFile.includes("('frontend', 'frontend')") && specFile.includes("('extension', 'extension')"),
+    'Expected the release build to bundle the frontend and extension assets.',
+  );
+});
+
+test('frozen builds resolve config and database paths from the app runtime root', () => {
+  assert(
+    configPy.includes('from backend.runtime import get_app_root'),
+    'Expected config persistence to resolve from a shared runtime-root helper.',
+  );
+  assert(
+    configPy.includes('SETTINGS_FILE = os.path.join(get_app_root(), "backend", "settings.json")'),
+    'Expected settings.json to live under the resolved app root in frozen builds.',
+  );
+  assert(
+    databasePy.includes('DB_PATH = os.path.join(get_app_root(), "backend", "library.db")'),
+    'Expected the SQLite library path to resolve from the app runtime root in frozen builds.',
   );
 });

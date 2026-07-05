@@ -2,6 +2,7 @@ import sys
 import os
 import time
 import threading
+import ctypes
 import requests
 import uvicorn
 import webview
@@ -16,9 +17,38 @@ from backend.main import app as fastapi_app
 from backend.database import init_db, SessionLocal
 from backend.ingest import run_ingestion, deduplicate_games
 from backend.config import get_settings
+from backend.runtime import get_app_root
 
 PORT = 8765
 SERVER_URL = f"http://127.0.0.1:{PORT}/"
+APP_USER_MODEL_ID = "XDir.Library"
+APP_ICON_RELATIVE_PATH = os.path.join("extension", "icon128.png")
+APP_ROOT = get_app_root()
+APP_ICON_PATH = os.path.join(APP_ROOT, APP_ICON_RELATIVE_PATH)
+
+def configure_windows_shell_identity():
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass
+
+def apply_native_window_icon(window):
+    if not os.path.exists(APP_ICON_PATH):
+        return
+    try:
+        import clr
+        clr.AddReference('System.Drawing')
+        import System.Drawing as Drawing
+        bitmap = Drawing.Bitmap(APP_ICON_PATH)
+        try:
+            icon_handle = bitmap.GetHicon()
+            icon_obj = Drawing.Icon.FromHandle(icon_handle)
+            if getattr(window, 'gui', None):
+                window.gui.Icon = icon_obj
+        finally:
+            bitmap.Dispose()
+    except Exception:
+        pass
 
 def start_server():
     init_db()
@@ -41,6 +71,8 @@ def start_server():
     uvicorn.run(fastapi_app, host="127.0.0.1", port=PORT, log_level="warning")
 
 def main():
+    configure_windows_shell_identity()
+
     # Start FastAPI server in background daemon thread
     server_thread = threading.Thread(target=start_server, daemon=True)
     server_thread.start()
@@ -143,12 +175,13 @@ def main():
     
     def on_loaded():
         time.sleep(0.15)
+        apply_native_window_icon(window)
         window.show()
         
     window.events.loaded += on_loaded
     
     # Store all webview cache/data locally in the app directory so it doesn't touch the C drive
-    local_cache_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "cache")
+    local_cache_dir = os.path.join(APP_ROOT, "cache")
     os.makedirs(local_cache_dir, exist_ok=True)
     
     webview.start(private_mode=False, storage_path=local_cache_dir)

@@ -12,8 +12,12 @@ from backend.database import get_db, init_db, Game, Screenshot, Tag, CustomTag, 
 from backend.scanner import inspect_archive
 from backend.ingest import run_ingestion, determine_source_info
 from backend.config import get_settings, save_settings, get_games_dir
+from backend.runtime import get_app_root
 
 app = FastAPI(title="XDir API", version="1.0.0")
+APP_ROOT = get_app_root()
+EXTENSION_DIR = os.path.join(APP_ROOT, "extension")
+FRONTEND_DIR = os.path.join(APP_ROOT, "frontend")
 
 TRUSTED_LOCAL_ORIGINS = [
     "http://127.0.0.1:8765",
@@ -89,7 +93,6 @@ def get_stats(db: Session = Depends(get_db)):
     archives = db.query(Game).filter(Game.file_type == "archive", Game.is_ignored == False).count()
     wishlist = db.query(Game).filter(Game.file_type == "wishlist", Game.is_ignored == False).count()
     s = get_settings()
-    ext_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
     return {
         "total": total,
         "identified": identified,
@@ -98,7 +101,7 @@ def get_stats(db: Session = Depends(get_db)):
         "archives": archives,
         "wishlist": wishlist,
         "games_dir": s.get("games_dir", ""),
-        "extension_dir": ext_dir
+        "extension_dir": EXTENSION_DIR
     }
 
 class SettingsPayload(BaseModel):
@@ -112,8 +115,7 @@ class SettingsPayload(BaseModel):
 @app.get("/api/settings")
 def get_app_settings():
     s = get_settings()
-    ext_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
-    s["extension_dir"] = ext_dir
+    s["extension_dir"] = EXTENSION_DIR
     return s
 
 @app.post("/api/settings")
@@ -139,8 +141,7 @@ def update_app_settings(payload: SettingsPayload, background_tasks: BackgroundTa
         except Exception:
             pass
             
-    ext_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
-    updated["extension_dir"] = ext_dir
+    updated["extension_dir"] = EXTENSION_DIR
     return {"message": "Settings saved successfully", "settings": updated}
 
 @app.get("/api/tags/all")
@@ -680,7 +681,7 @@ def win_close():
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-frontend_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "frontend")
+frontend_dir = FRONTEND_DIR
 if os.path.exists(frontend_dir):
     static_dir = os.path.join(frontend_dir, "static")
     if not os.path.exists(static_dir):

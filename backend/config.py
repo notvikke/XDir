@@ -1,8 +1,9 @@
 import os
 import json
 from pathlib import Path
+from backend.runtime import get_app_root
 
-SETTINGS_FILE = os.path.join(os.path.abspath(os.path.dirname(__file__)), "settings.json")
+SETTINGS_FILE = os.path.join(get_app_root(), "backend", "settings.json")
 
 def get_default_games_dir() -> str:
     if os.path.exists(r"D:\Game setups"):
@@ -37,6 +38,7 @@ def save_settings(new_settings: dict) -> dict:
     current = get_settings()
     current.update(new_settings)
     try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(current, f, indent=2)
     except Exception as e:
