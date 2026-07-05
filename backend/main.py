@@ -14,7 +14,7 @@ from backend.ingest import run_ingestion, determine_source_info
 from backend.config import get_settings, save_settings, get_games_dir
 from backend.runtime import get_app_root, get_bundle_root
 
-app = FastAPI(title="XDir API", version="1.0.0")
+app = FastAPI(title="XDir API", version="0.1.1")
 APP_ROOT = get_app_root()
 BUNDLE_ROOT = get_bundle_root()
 EXTENSION_DIR = os.path.join(BUNDLE_ROOT, "extension")
@@ -552,12 +552,11 @@ def delete_game(game_id: int, db: Session = Depends(get_db)):
 
 # Extension Status & Heartbeat Tracking
 import time
-from backend.scraper import fetch_game_metadata, fetch_all_missing_metadata
 
 EXTENSION_STATUS = {"connected": False, "last_ping": 0, "version": "Unknown", "last_sync_trigger": 0}
 
 class ExtensionPingPayload(BaseModel):
-    version: Optional[str] = "1.0.0"
+    version: Optional[str] = "0.1.1"
 
 @app.post("/api/extension/ping")
 def ping_extension(payload: ExtensionPingPayload):

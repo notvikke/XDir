@@ -1,5 +1,5 @@
 [CENTER]
-[SIZE=7][B]XDir v0.1.0[/B][/SIZE]
+[SIZE=7][B]XDir v0.1.1[/B][/SIZE]
 [SIZE=4]Game Library Manager for F95Zone, DLsite, Itch.io and local archives[/SIZE]
 [/CENTER]
 
@@ -23,7 +23,7 @@ XDir is directly inspired by XLibrary. I liked the idea of having a dedicated li
 
 [LIST=1]
 [*]Download the Windows build from the link below
-[*]Extract [ICODE]XDir-0.1.0-windows.zip[/ICODE] to a normal folder
+[*]Extract [ICODE]XDir-0.1.1-windows.zip[/ICODE] to a normal folder
 [*]Run [ICODE]XDir.exe[/ICODE]
 [*]Configure your game directory in Settings
 [*]Optionally use the bundled extension/helper flow to import metadata from supported sites
@@ -31,15 +31,13 @@ XDir is directly inspired by XLibrary. I liked the idea of having a dedicated li
 
 [B]Important:[/B] do not move only the exe by itself. The packaged runtime files need to stay beside [ICODE]XDir.exe[/ICODE].
 
-[SIZE=5][B]What Is New In 0.1.0[/B][/SIZE]
+[SIZE=5][B]What Is New In 0.1.1[/B][/SIZE]
 
 [LIST]
-[*]First public Windows release
-[*]Blue UI refresh and cleaner library layout
-[*]More robust duplicate handling for source-link and archive/install clone cases
-[*]Improved startup scan stability and safer handling of temporarily missing files/directories
-[*]Fixed packaged runtime paths for settings, database, frontend assets, and extension assets
-[*]Added a native Windows app icon and proper packaged executable branding
+[*]Immediate branded startup splash instead of a hidden first-launch window
+[*]Startup maintenance moved off the blocking boot path so the library opens sooner
+[*]Lower cold-start overhead for the packaged app and a more responsive first-run feel
+[*]Carries forward the blue UI refresh, duplicate handling improvements, and packaged branding work from 0.1.0
 [/LIST]
 
 [SIZE=5][B]Screenshots[/B][/SIZE]
@@ -103,15 +101,17 @@ The most useful reports right now are:
 
 [SIZE=5][B]Source / Issues[/B][/SIZE]
 
-[B]GitHub:[/B] [URL=https://github.com/notvikke/XDir]https://github.com/notvikke/XDir[/URL]
+[B]GitHub Repo:[/B] [URL=https://github.com/notvikke/XDir]notvikke/XDir[/URL]
+
+[B]Issues / Bug Reports:[/B] [URL=https://github.com/notvikke/XDir/issues]GitHub Issues[/URL]
 
 If you want to report bugs or follow changes, GitHub is the main place for that right now.
 
 [SIZE=5][B]Download[/B][/SIZE]
 
-[B]GitHub Release:[/B] [URL=https://github.com/notvikke/XDir/releases/tag/v0.1.0]https://github.com/notvikke/XDir/releases/tag/v0.1.0[/URL]
+[B]GitHub Release Page:[/B] [URL=https://github.com/notvikke/XDir/releases/tag/v0.1.1]XDir v0.1.1 Release[/URL]
 
-[B]Windows Build:[/B] [URL=https://github.com/notvikke/XDir/releases/download/v0.1.0/XDir-0.1.0-windows.zip]XDir-0.1.0-windows.zip[/URL]
+[B]Windows Build (.zip):[/B] [URL=https://github.com/notvikke/XDir/releases/download/v0.1.1/XDir-0.1.1-windows.zip]XDir-0.1.1-windows.zip[/URL]
 
 [B]SHA / VirusTotal:[/B] add these before posting if you want the thread to look more complete.
 
@@ -121,4 +121,4 @@ XDir is an independent project and is not affiliated with F95Zone. Library data 
 
 [SIZE=5][B]Suggested Thread Title[/B][/SIZE]
 
-[CODE][Tool] XDir [v0.1.0] - Game Library Manager for F95Zone, DLsite, Itch.io and local archives[/CODE]
+[CODE][Tool] XDir [v0.1.1] - Game Library Manager for F95Zone, DLsite, Itch.io and local archives[/CODE]

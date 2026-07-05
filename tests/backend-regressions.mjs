@@ -49,12 +49,50 @@ test('dedupe merges identified games that share a normalized source URL even wit
 
 test('startup runs a maintenance dedupe pass even when startup scanning is disabled', () => {
   assert(
-    appPy.includes('deduplicate_games(maintenance_db)'),
-    'Expected app startup to run a maintenance dedupe pass against the existing library database.',
+    appPy.includes('schedule_library_maintenance()'),
+    'Expected desktop startup to schedule library maintenance separately from the server boot path.',
   );
   assert(
-    appPy.includes('maintenance_db = SessionLocal()'),
-    'Expected startup maintenance dedupe to use its own short-lived database session.',
+    appPy.includes('deduplicate_games(maintenance_db)'),
+    'Expected scheduled maintenance to still run a dedupe pass against the existing library database.',
+  );
+  assert(
+    !appPy.includes('def start_server():\n    init_db()\n    maintenance_db = SessionLocal()'),
+    'Expected the API server boot path to stop doing synchronous dedupe work before listening.',
+  );
+});
+
+test('desktop startup shows a visible splash immediately instead of hiding the window until the API responds', () => {
+  assert(
+    appPy.includes('STARTUP_SPLASH_HTML = """'),
+    'Expected the desktop entry point to define a lightweight startup splash HTML payload.',
+  );
+  assert(
+    appPy.includes('html=STARTUP_SPLASH_HTML'),
+    'Expected the first window paint to use the local splash HTML instead of waiting for the full app URL.',
+  );
+  assert(
+    appPy.includes('window.load_url(APP_URL)'),
+    'Expected the visible splash window to navigate into the real app after the local API becomes ready.',
+  );
+  assert(
+    !appPy.includes('hidden=True'),
+    'Expected the desktop window to stop booting in a hidden state.',
+  );
+  assert(
+    !appPy.includes('for _ in range(50):'),
+    'Expected startup to stop using the old blocking poll loop before creating the window.',
+  );
+});
+
+test('desktop boot path avoids unnecessary heavyweight imports on the critical path', () => {
+  assert(
+    !appPy.includes('import requests'),
+    'Expected the desktop entry point to avoid importing requests just for localhost readiness checks.',
+  );
+  assert(
+    !mainPy.includes('from backend.scraper import fetch_game_metadata, fetch_all_missing_metadata'),
+    'Expected backend startup to avoid importing scraper helpers globally before the app is even opened.',
   );
 });
 

@@ -4,7 +4,7 @@ function sendHeartbeat() {
     fetch(`${API_BASE}/api/extension/ping`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version: "1.0.0" })
+        body: JSON.stringify({ version: "0.1.1" })
     })
     .then(res => res.json())
     .then(data => {

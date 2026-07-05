@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 set "DIST_DIR=%CD%\dist"
 set "APP_DIR=%DIST_DIR%\XDir"
-set "ZIP_PATH=%DIST_DIR%\XDir-0.1.0-windows.zip"
+set "ZIP_PATH=%DIST_DIR%\XDir-0.1.1-windows.zip"
 
 set "PYTHON_CMD="
 if defined PYTHON_EXE if exist "%PYTHON_EXE%" set "PYTHON_CMD=%PYTHON_EXE%"
