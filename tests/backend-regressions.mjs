@@ -47,6 +47,17 @@ test('dedupe merges identified games that share a normalized source URL even wit
   );
 });
 
+test('wishlist items can auto-graduate into scanned local games by matching source metadata', () => {
+  assert(
+    ingestPy.includes('game = db.query(Game).filter(Game.file_type == "wishlist", Game.source_url == source_url).first()'),
+    'Expected ingestion to look for wishlist entries with the same normalized source URL when scanning new local games.',
+  );
+  assert(
+    ingestPy.includes('game = db.query(Game).filter(Game.source_id == source_id).first()'),
+    'Expected ingestion to keep the source-id-based wishlist graduation path for RJ/thread-linked games.',
+  );
+});
+
 test('startup runs a maintenance dedupe pass even when startup scanning is disabled', () => {
   assert(
     appPy.includes('schedule_library_maintenance()'),
@@ -91,8 +102,51 @@ test('desktop boot path avoids unnecessary heavyweight imports on the critical p
     'Expected the desktop entry point to avoid importing requests just for localhost readiness checks.',
   );
   assert(
+    !appPy.includes('\nimport uvicorn\n'),
+    'Expected the desktop entry point to avoid importing uvicorn at module import time before the splash can appear.',
+  );
+  assert(
+    !appPy.includes('\nimport webview\n'),
+    'Expected the desktop entry point to avoid importing pywebview at module import time before the splash can appear.',
+  );
+  assert(
+    !appPy.includes('from backend.main import app as fastapi_app'),
+    'Expected the FastAPI app to be imported lazily instead of on the desktop module critical path.',
+  );
+  assert(
+    !appPy.includes('from backend.database import SessionLocal'),
+    'Expected database session helpers to load lazily for background maintenance only after the splash appears.',
+  );
+  assert(
+    appPy.includes('def load_webview_module():'),
+    'Expected a dedicated lazy loader for the pywebview dependency.',
+  );
+  assert(
+    appPy.includes('def get_fastapi_app():'),
+    'Expected a dedicated lazy loader for the FastAPI app dependency.',
+  );
+  assert(
     !mainPy.includes('from backend.scraper import fetch_game_metadata, fetch_all_missing_metadata'),
     'Expected backend startup to avoid importing scraper helpers globally before the app is even opened.',
+  );
+});
+
+test('desktop startup splash exposes real progress updates instead of an indeterminate background wait', () => {
+  assert(
+    appPy.includes('id="boot-progress-bar"'),
+    'Expected the startup splash to include a concrete progress bar element.',
+  );
+  assert(
+    appPy.includes('id="boot-progress-label"'),
+    'Expected the startup splash to include a visible progress label for launch stages.',
+  );
+  assert(
+    appPy.includes('style.width = `${safeProgress}%`;'),
+    'Expected splash status updates to push numeric progress into the visible progress bar.',
+  );
+  assert(
+    appPy.includes('set_startup_status(window, "Opening XDir...", "Preparing the desktop shell for launch.", 8)'),
+    'Expected the splash to begin with an immediate visible launch stage rather than silent waiting.',
   );
 });
 
@@ -158,6 +212,10 @@ test('windows packaging config exists for generating a branded exe release', () 
     specFile.includes("('frontend', 'frontend')") && specFile.includes("('extension', 'extension')"),
     'Expected the release build to bundle the frontend and extension assets.',
   );
+  assert(
+    specFile.includes('upx=False'),
+    'Expected the Windows release build to avoid UPX compression because it can hurt first-launch startup time and trigger extra scanning.',
+  );
 });
 
 test('frozen builds resolve config and database paths from the app runtime root', () => {
@@ -201,5 +259,20 @@ test('frozen builds resolve bundled frontend and extension assets from the PyIns
   assert(
     appPy.includes('APP_ICON_PATH = os.path.join(BUNDLE_ROOT, APP_ICON_RELATIVE_PATH)'),
     'Expected the desktop app icon to be loaded from the bundled asset root instead of the writable app root.',
+  );
+});
+
+test('backend exposes a manual wishlist-to-local linking flow as a fallback when auto-graduation misses', () => {
+  assert(
+    mainPy.includes('@app.get("/api/games/{game_id}/linkable-local")'),
+    'Expected the API to expose searchable local-link candidates for wishlist entries.',
+  );
+  assert(
+    mainPy.includes('@app.post("/api/games/{game_id}/link-local")'),
+    'Expected the API to expose a manual wishlist-to-local linking endpoint.',
+  );
+  assert(
+    mainPy.includes('from backend.ingest import run_ingestion, determine_source_info, merge_game_records'),
+    'Expected the manual link flow to reuse the existing merge logic instead of duplicating merge behavior.',
   );
 });

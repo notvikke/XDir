@@ -10,7 +10,7 @@ from pathlib import Path
 
 from backend.database import get_db, init_db, Game, Screenshot, Tag, CustomTag, JournalEntry
 from backend.scanner import inspect_archive
-from backend.ingest import run_ingestion, determine_source_info
+from backend.ingest import run_ingestion, determine_source_info, merge_game_records
 from backend.config import get_settings, save_settings, get_games_dir
 from backend.runtime import get_app_root, get_bundle_root
 
@@ -69,6 +69,9 @@ class MetadataSyncPayload(BaseModel):
 
 class LinkGamePayload(BaseModel):
     source_url: str
+
+class LocalLinkPayload(BaseModel):
+    target_game_id: int
 
 class UpdateGamePayload(BaseModel):
     playing_progress: Optional[str] = None
@@ -362,6 +365,70 @@ def link_game(game_id: int, payload: LinkGamePayload, db: Session = Depends(get_
     
     db.refresh(game)
     return {"message": f"Game linked to {source_type.upper()} and metadata fetched!", "game": game.to_dict()}
+
+@app.get("/api/games/{game_id}/linkable-local")
+def get_linkable_local_games(game_id: int, search: Optional[str] = Query(None), db: Session = Depends(get_db)):
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if game.file_type != "wishlist":
+        raise HTTPException(status_code=400, detail="Only wishlist items can link to a local entry")
+
+    term_source = (search or game.title or "").strip()
+    query = db.query(Game).filter(Game.file_type != "wishlist", Game.is_ignored == False)
+
+    if term_source:
+        term = f"%{term_source}%"
+        query = query.filter(
+            (Game.title.ilike(term)) |
+            (Game.raw_name.ilike(term)) |
+            (Game.developer.ilike(term))
+        )
+
+    candidates = query.order_by(Game.title.asc()).limit(25).all()
+    return [
+        {
+            "id": entry.id,
+            "title": entry.title,
+            "folder_path": entry.folder_path,
+            "file_type": entry.file_type,
+            "developer": entry.developer,
+            "source_type": entry.source_type,
+            "source_url": entry.source_url,
+        }
+        for entry in candidates
+    ]
+
+@app.post("/api/games/{game_id}/link-local")
+def link_wishlist_to_local(game_id: int, payload: LocalLinkPayload, db: Session = Depends(get_db)):
+    wishlist = db.query(Game).filter(Game.id == game_id).first()
+    if not wishlist:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if wishlist.file_type != "wishlist":
+        raise HTTPException(status_code=400, detail="Only wishlist items can link to a local entry")
+
+    target = db.query(Game).filter(Game.id == payload.target_game_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target local entry not found")
+    if target.file_type == "wishlist":
+        raise HTTPException(status_code=400, detail="Target entry must be a scanned local game, not another wishlist item")
+
+    if wishlist.title and (not target.is_identified or target.source_type == "unknown" or target.title == target.raw_name):
+        target.title = wishlist.title
+
+    if wishlist.source_url and not target.source_url:
+        target.source_url = wishlist.source_url
+    if wishlist.source_id and not target.source_id:
+        target.source_id = wishlist.source_id
+    if wishlist.source_type and target.source_type == "unknown":
+        target.source_type = wishlist.source_type
+    if wishlist.is_identified and not target.is_identified:
+        target.is_identified = True
+
+    merge_game_records(target, wishlist, db)
+    db.commit()
+    db.refresh(target)
+    return {"message": "Wishlist item linked to local entry successfully", "game": target.to_dict()}
 
 @app.post("/api/games/{game_id}/clear-source")
 def clear_game_source(game_id: int, db: Session = Depends(get_db)):

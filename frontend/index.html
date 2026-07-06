@@ -596,6 +596,10 @@
                                 <i data-lucide="link"></i>
                                 <span>Link Source URL</span>
                             </button>
+                            <button class="src-action-btn src-btn-link" id="ov-btn-link-local" title="Match this wishlist item to a scanned local game" style="display:none; margin-top:8px;">
+                                <i data-lucide="folder-search"></i>
+                                <span>Link to Local Entry</span>
+                            </button>
                             <button class="src-action-btn src-btn-wrong" id="ov-btn-mark-wrong" title="Clear current source data" style="margin-top:8px;">
                                 <i data-lucide="alert-triangle"></i>
                                 <span>Clear Data</span>
@@ -620,6 +624,26 @@
                             </div>
                             <div class="link-form-hint">
                                 Accepts: <span class="hint-tag">f95zone.to/threads/...</span> <span class="hint-tag">dlsite.com/.../RJ...</span> <span class="hint-tag">RJ01234567</span> <span class="hint-tag">*.itch.io/...</span> <span class="hint-tag">steampowered.com/app/...</span>
+                            </div>
+                        </div>
+
+                        <div class="source-link-form" id="ov-local-link-form" style="display:none;">
+                            <label class="link-form-label">Match this wishlist item to a scanned local entry:</label>
+                            <div class="link-form-stack">
+                                <input type="text" id="ov-local-link-search" class="input-dark" placeholder="Search local titles, raw folder names, or developers">
+                                <select id="ov-local-link-select" class="input-dark local-link-select" size="6"></select>
+                                <div class="link-form-row">
+                                    <button class="btn-primary" id="ov-btn-submit-local-link">
+                                        <i data-lucide="link-2"></i>
+                                        <span>Link Wishlist to Local Game</span>
+                                    </button>
+                                    <button class="btn-secondary" id="ov-btn-cancel-local-link">
+                                        <i data-lucide="x"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="link-form-hint">
+                                Choose the scanned local game that should replace this wishlist item while keeping its notes, tags, and source metadata.
                             </div>
                         </div>
                     </div>

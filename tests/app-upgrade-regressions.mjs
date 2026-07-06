@@ -8,6 +8,7 @@ const mainPy = fs.readFileSync('backend/main.py', 'utf8');
 const html = fs.readFileSync('frontend/index.html', 'utf8');
 const js = fs.readFileSync('frontend/static/js/app.js', 'utf8');
 const css = fs.readFileSync('frontend/static/css/styles.css', 'utf8');
+const extensionManifest = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8'));
 
 function assert(condition, message) {
   if (!condition) {
@@ -178,5 +179,20 @@ test('manual source link dismiss button uses the compact icon style', () => {
   assert(
     /\.link-form-row\s+\.btn-secondary\s*\{[\s\S]*?padding:\s*0;/.test(css),
     'Expected the link form close button to use compact icon-only sizing.',
+  );
+});
+
+test('extension badge icon is exposed as a web accessible resource for injected page UI', () => {
+  const resources = extensionManifest.web_accessible_resources || [];
+  const iconResource = resources.find(entry =>
+    Array.isArray(entry.resources) && entry.resources.includes('icon128.png'),
+  );
+  assert(
+    iconResource,
+    'Expected the extension manifest to expose icon128.png as a web accessible resource for the injected badge UI.',
+  );
+  assert(
+    Array.isArray(iconResource.matches) && iconResource.matches.includes('<all_urls>'),
+    'Expected the injected badge icon resource to be readable on supported page URLs.',
   );
 });

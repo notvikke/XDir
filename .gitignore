@@ -1,4 +1,5 @@
 __pycache__/
+backend/__pycache__/
 *.py[cod]
 *.pyo
 *.pyd
@@ -11,8 +12,10 @@ env/
 
 cache/
 backend/library.db
+backend/settings.json
 xlibrary.db
 startup_error.log
+*.log
 
 games_report.csv
 games_list.txt
@@ -20,7 +23,7 @@ games_list.txt
 
 dist/
 build/
-*.spec
+*.zip
 
 .codex/
 .agents/

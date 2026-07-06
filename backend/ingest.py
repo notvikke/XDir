@@ -101,6 +101,9 @@ def run_ingestion(db: Session = None):
             if not game:
                 # Check for wishlist graduation (perfect title match)
                 game = db.query(Game).filter(Game.file_type == "wishlist", Game.title == item["title"]).first()
+            if not game and source_url and source_type != "unknown":
+                # Stronger wishlist graduation path for linked wishlist entries whose local folder names differ.
+                game = db.query(Game).filter(Game.file_type == "wishlist", Game.source_url == source_url).first()
             if not game and source_id:
                 # Deduplication fallback: if the new folder is a DLsite code (RJ01105757), 
                 # check if there's an existing orphaned archive with that same source_id!

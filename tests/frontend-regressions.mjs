@@ -82,3 +82,30 @@ test('unused local-engine header status pill is removed', () => {
     'Expected frontend JS to stop updating the removed API status label.',
   );
 });
+
+test('wishlist overview exposes a local-entry link fallback when auto-migration misses', () => {
+  assert(
+    html.includes('id="ov-btn-link-local"'),
+    'Expected the overview source actions to include a dedicated wishlist local-link button.',
+  );
+  assert(
+    html.includes('id="ov-local-link-form"'),
+    'Expected frontend/index.html to expose a local-link form for wishlist migration.',
+  );
+  assert(
+    html.includes('id="ov-local-link-select"'),
+    'Expected the wishlist local-link form to provide a selectable local-entry list.',
+  );
+  assert(
+    js.includes("document.getElementById('ov-btn-link-local')"),
+    'Expected frontend JS to bind the wishlist local-link control.',
+  );
+  assert(
+    js.includes("fetch(`${API_BASE}/api/games/${currentGame.id}/linkable-local"),
+    'Expected the local-link flow to request candidate local entries from the backend.',
+  );
+  assert(
+    js.includes("fetch(`${API_BASE}/api/games/${currentGame.id}/link-local`"),
+    'Expected the local-link flow to submit a manual wishlist-to-local merge request.',
+  );
+});

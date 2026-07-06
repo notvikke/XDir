@@ -5,20 +5,14 @@ import json
 import threading
 import ctypes
 import urllib.request
-import uvicorn
-import webview
+
+from backend.runtime import get_app_root, get_bundle_root
 
 # Fix for pythonw where stdout/stderr are None
 if sys.stdout is None:
     sys.stdout = open(os.devnull, 'w')
 if sys.stderr is None:
     sys.stderr = open(os.devnull, 'w')
-
-from backend.main import app as fastapi_app
-from backend.database import SessionLocal
-from backend.ingest import run_ingestion, deduplicate_games
-from backend.config import get_settings
-from backend.runtime import get_app_root, get_bundle_root
 
 PORT = 8765
 SERVER_URL = f"http://127.0.0.1:{PORT}/"
@@ -29,6 +23,8 @@ APP_ROOT = get_app_root()
 BUNDLE_ROOT = get_bundle_root()
 APP_ICON_PATH = os.path.join(BUNDLE_ROOT, APP_ICON_RELATIVE_PATH)
 SERVER_READY_TIMEOUT_SECONDS = 45.0
+_webview_module = None
+_fastapi_app = None
 
 STARTUP_SPLASH_HTML = """
 <!DOCTYPE html>
@@ -108,6 +104,21 @@ STARTUP_SPLASH_HTML = """
       font-size: 13px;
       line-height: 1.5;
     }
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .progress-meta strong {
+      color: var(--text);
+      font-size: 13px;
+      letter-spacing: 0.01em;
+    }
     .loader {
       position: relative;
       height: 6px;
@@ -115,23 +126,18 @@ STARTUP_SPLASH_HTML = """
       background: rgba(148, 163, 184, 0.14);
       overflow: hidden;
     }
-    .loader::after {
-      content: "";
-      position: absolute;
-      inset: 0 auto 0 -42%;
-      width: 42%;
+    .loader-fill {
+      height: 100%;
+      width: 8%;
       border-radius: inherit;
-      background: linear-gradient(90deg, transparent, var(--blue), var(--cyan), transparent);
-      animation: pulse 1.2s ease-in-out infinite;
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.35);
+      transition: width 0.28s ease;
     }
     .footnote {
       margin: 16px 0 0;
       color: var(--muted);
       font-size: 12px;
-    }
-    @keyframes pulse {
-      0% { transform: translateX(0); }
-      100% { transform: translateX(320%); }
     }
   </style>
 </head>
@@ -146,12 +152,47 @@ STARTUP_SPLASH_HTML = """
     </div>
     <p class="status" id="boot-status">Opening XDir...</p>
     <p class="detail" id="boot-detail">Preparing the local library engine and window shell.</p>
-    <div class="loader"></div>
+    <div class="progress-meta">
+      <span>Startup Progress</span>
+      <strong id="boot-progress-label">8%</strong>
+    </div>
+    <div class="loader">
+      <div class="loader-fill" id="boot-progress-bar"></div>
+    </div>
     <p class="footnote">First launch can take a bit longer while Windows warms up WebView2 and local storage.</p>
   </main>
 </body>
 </html>
 """
+
+
+def load_webview_module():
+    global _webview_module
+    if _webview_module is None:
+        import webview as webview_module
+        _webview_module = webview_module
+    return _webview_module
+
+
+def get_fastapi_app():
+    global _fastapi_app
+    if _fastapi_app is None:
+        import backend.main as backend_main_module
+        _fastapi_app = backend_main_module.app
+    return _fastapi_app
+
+
+def load_maintenance_dependencies():
+    import backend.config as config_module
+    import backend.database as database_module
+    import backend.ingest as ingest_module
+
+    return (
+        config_module.get_settings,
+        database_module.SessionLocal,
+        ingest_module.run_ingestion,
+        ingest_module.deduplicate_games,
+    )
 
 def configure_windows_shell_identity():
     try:
@@ -177,20 +218,29 @@ def apply_native_window_icon(window):
     except Exception:
         pass
 
-def set_startup_status(window, status_text: str, detail_text: str):
+def set_startup_status(window, status_text: str, detail_text: str, progress: int | float | None = None):
     try:
         status_json = json.dumps(status_text)
         detail_json = json.dumps(detail_text)
-        window.evaluate_js(
-            f"""
-            (function () {{
+        safe_progress = 0 if progress is None else max(0, min(100, int(progress)))
+        progress_json = json.dumps(safe_progress)
+        script = """
+            (function () {
               const statusEl = document.getElementById('boot-status');
               const detailEl = document.getElementById('boot-detail');
-              if (statusEl) statusEl.textContent = {status_json};
-              if (detailEl) detailEl.textContent = {detail_json};
-            }})();
+              const progressBar = document.getElementById('boot-progress-bar');
+              const progressLabel = document.getElementById('boot-progress-label');
+              const safeProgress = __PROGRESS__;
+              if (statusEl) statusEl.textContent = __STATUS__;
+              if (detailEl) detailEl.textContent = __DETAIL__;
+              if (progressBar) progressBar.style.width = `${safeProgress}%`;
+              if (progressLabel) progressLabel.textContent = `${safeProgress}%`;
+            })();
             """
-        )
+        script = script.replace("__PROGRESS__", progress_json)
+        script = script.replace("__STATUS__", status_json)
+        script = script.replace("__DETAIL__", detail_json)
+        window.evaluate_js(script)
     except Exception:
         pass
 
@@ -209,9 +259,9 @@ def wait_for_server_ready(timeout_seconds: float = 10.0) -> bool:
 
 
 def schedule_library_maintenance():
-    settings = get_settings()
-
     def bg_maintenance():
+        get_settings, SessionLocal, run_ingestion, deduplicate_games = load_maintenance_dependencies()
+        settings = get_settings()
         time.sleep(1.0)
         maintenance_db = SessionLocal()
         try:
@@ -231,25 +281,30 @@ def schedule_library_maintenance():
 
 
 def start_server():
-    uvicorn.run(fastapi_app, host="127.0.0.1", port=PORT, log_level="warning")
+    import uvicorn
+
+    uvicorn.run(get_fastapi_app(), host="127.0.0.1", port=PORT, log_level="warning")
 
 
 def bootstrap_window(window):
     apply_native_window_icon(window)
-    set_startup_status(window, "Starting local engine...", "Bringing the local API online before loading your library.")
+    set_startup_status(window, "Opening XDir...", "Preparing the desktop shell for launch.", 8)
+    set_startup_status(window, "Starting local engine...", "Bringing the local API online before loading your library.", 24)
 
     server_thread = threading.Thread(target=start_server, daemon=True)
     server_thread.start()
+    set_startup_status(window, "Warming local engine...", "Starting the bundled API and checking local storage access.", 42)
 
     if not wait_for_server_ready(timeout_seconds=12.0):
-        set_startup_status(window, "Still starting...", "First launch can be slower while Windows initializes the embedded browser runtime.")
+        set_startup_status(window, "Still starting...", "First launch can be slower while Windows initializes the embedded browser runtime.", 58)
 
     if not wait_for_server_ready(timeout_seconds=SERVER_READY_TIMEOUT_SECONDS - 12.0):
-        set_startup_status(window, "Startup is taking longer than expected", "The app is still waiting for the local engine. If this repeats every launch, restart XDir.")
+        set_startup_status(window, "Startup is taking longer than expected", "The app is still waiting for the local engine. If this repeats every launch, restart XDir.", 72)
         return
 
-    set_startup_status(window, "Loading library...", "The window is ready. Finalizing the game list and startup maintenance in the background.")
+    set_startup_status(window, "Local engine ready...", "Opening the main library window and handing off startup work to the background.", 84)
     schedule_library_maintenance()
+    set_startup_status(window, "Loading library...", "The window is ready. Finalizing the game list and startup maintenance in the background.", 96)
     try:
         window.load_url(APP_URL)
     except Exception:
@@ -270,6 +325,8 @@ def main():
         except KeyboardInterrupt:
             print("Shutting down.")
             sys.exit(0)
+
+    webview = load_webview_module()
             
     class WindowApi:
         def minimize(self):

@@ -9,36 +9,30 @@ XDir is directly inspired by XLibrary. I liked the idea of having a dedicated li
 
 [SIZE=5][B]Key Features[/B][/SIZE]
 
-[LIST]
-[*][B]Local-first desktop app[/B] - Windows release with portable-style packaging and local SQLite storage
-[*][B]Folder and archive scanning[/B] - scan game folders, executables, and archives into one library
-[*][B]Metadata linking[/B] - attach supported source URLs and enrich entries from F95Zone, DLsite, and Itch.io
-[*][B]Duplicate handling[/B] - merge weak duplicates more safely during ingestion and startup maintenance
-[*][B]Library tracking[/B] - keep installed entries, archive-only entries, wishlist items, notes, tags, and progress in one place
-[*][B]Manual linking flow[/B] - paste a supported thread or store URL and fetch the related metadata
-[*][B]Cleaner UI pass[/B] - refreshed blue-accent UI, denser library cards, and improved settings coverage
-[/LIST]
+[B]-[/B] [B]Local-first desktop app[/B] - Windows release with portable-style packaging and local SQLite storage
+[B]-[/B] [B]Folder and archive scanning[/B] - scan game folders, executables, and archives into one library
+[B]-[/B] [B]Metadata linking[/B] - attach supported source URLs and enrich entries from F95Zone, DLsite, and Itch.io
+[B]-[/B] [B]Duplicate handling[/B] - merge weak duplicates more safely during ingestion and startup maintenance
+[B]-[/B] [B]Library tracking[/B] - keep installed entries, archive-only entries, wishlist items, notes, tags, and progress in one place
+[B]-[/B] [B]Manual linking flow[/B] - paste a supported thread or store URL and fetch the related metadata
+[B]-[/B] [B]Cleaner UI pass[/B] - refreshed blue-accent UI, denser library cards, and improved settings coverage
 
 [SIZE=5][B]Quick Start[/B][/SIZE]
 
-[LIST=1]
-[*]Download the Windows build from the link below
-[*]Extract [ICODE]XDir-0.1.1-windows.zip[/ICODE] to a normal folder
-[*]Run [ICODE]XDir.exe[/ICODE]
-[*]Configure your game directory in Settings
-[*]Optionally use the bundled extension/helper flow to import metadata from supported sites
-[/LIST]
+1. Download the Windows build from the link below
+2. Extract [ICODE]XDir-0.1.1-windows.zip[/ICODE] to a normal folder
+3. Run [ICODE]XDir.exe[/ICODE]
+4. Configure your game directory in Settings
+5. Optionally use the bundled extension/helper flow to import metadata from supported sites
 
 [B]Important:[/B] do not move only the exe by itself. The packaged runtime files need to stay beside [ICODE]XDir.exe[/ICODE].
 
 [SIZE=5][B]What Is New In 0.1.1[/B][/SIZE]
 
-[LIST]
-[*]Immediate branded startup splash instead of a hidden first-launch window
-[*]Startup maintenance moved off the blocking boot path so the library opens sooner
-[*]Lower cold-start overhead for the packaged app and a more responsive first-run feel
-[*]Carries forward the blue UI refresh, duplicate handling improvements, and packaged branding work from 0.1.0
-[/LIST]
+[B]-[/B] Immediate branded startup splash instead of a hidden first-launch window
+[B]-[/B] Startup maintenance moved off the blocking boot path so the library opens sooner
+[B]-[/B] Lower cold-start overhead for the packaged app and a more responsive first-run feel
+[B]-[/B] Carries forward the blue UI refresh, duplicate handling improvements, and packaged branding work from 0.1.0
 
 [SIZE=5][B]Screenshots[/B][/SIZE]
 
@@ -69,35 +63,29 @@ XDir is directly inspired by XLibrary. I liked the idea of having a dedicated li
 [/SPOILER]
 
 [SPOILER=Current Scope and Known Limits]
-[LIST]
-[*]Windows-focused release for now
-[*]No auto-updater yet
-[*]No cloud sync yet
-[*]Portable zip release, not a full installer
-[*]Source integrations depend on external site markup staying compatible
-[/LIST]
+[B]-[/B] Windows-focused release for now
+[B]-[/B] No auto-updater yet
+[B]-[/B] No cloud sync yet
+[B]-[/B] Portable zip release, not a full installer
+[B]-[/B] Source integrations depend on external site markup staying compatible
 [/SPOILER]
 
 [SPOILER=Planned and Next Improvements]
-[LIST]
-[*]Broader settings coverage and quality-of-life controls
-[*]More resilient source detection and metadata recovery
-[*]Further scan performance improvements on large libraries
-[*]Better per-game detail pages and import flows
-[*]Formal installer and smoother release/update flow
-[/LIST]
+[B]-[/B] Broader settings coverage and quality-of-life controls
+[B]-[/B] More resilient source detection and metadata recovery
+[B]-[/B] Further scan performance improvements on large libraries
+[B]-[/B] Better per-game detail pages and import flows
+[B]-[/B] Formal installer and smoother release/update flow
 [/SPOILER]
 
 [SIZE=5][B]Feedback Wanted[/B][/SIZE]
 
 The most useful reports right now are:
 
-[LIST]
-[*]Duplicate detection edge cases
-[*]Entries that lose metadata or reappear as clones
-[*]Directory scan reliability issues
-[*]UI inconsistencies or awkward workflows
-[/LIST]
+[B]-[/B] Duplicate detection edge cases
+[B]-[/B] Entries that lose metadata or reappear as clones
+[B]-[/B] Directory scan reliability issues
+[B]-[/B] UI inconsistencies or awkward workflows
 
 [SIZE=5][B]Source / Issues[/B][/SIZE]
 

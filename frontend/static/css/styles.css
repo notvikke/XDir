@@ -1831,6 +1831,20 @@ input:checked + .slider:before { transform: translateX(22px); }
     flex-shrink: 0;
 }
 
+.link-form-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.local-link-select {
+    width: 100%;
+    min-height: 180px;
+    padding: 10px 12px;
+    font-size: 0.84rem;
+    line-height: 1.5;
+}
+
 .link-form-hint {
     margin-top: 8px;
     font-size: 0.72rem;

@@ -803,9 +803,17 @@ function setupEventListeners() {
     const cancelLinkBtn = document.getElementById('ov-btn-cancel-link');
     const submitLinkBtn = document.getElementById('ov-btn-submit-link');
     const linkInput = document.getElementById('ov-link-url-input');
+    const localLinkBtn = document.getElementById('ov-btn-link-local');
+    const localLinkForm = document.getElementById('ov-local-link-form');
+    const localLinkSearch = document.getElementById('ov-local-link-search');
+    const localLinkSelect = document.getElementById('ov-local-link-select');
+    const cancelLocalLinkBtn = document.getElementById('ov-btn-cancel-local-link');
+    const submitLocalLinkBtn = document.getElementById('ov-btn-submit-local-link');
+    let localLinkSearchTimer = null;
 
     if (linkSourceBtn && linkForm) {
         linkSourceBtn.addEventListener('click', () => {
+            if (localLinkForm) localLinkForm.style.display = 'none';
             linkForm.style.display = linkForm.style.display === 'none' ? 'block' : 'none';
             if (linkForm.style.display === 'block') {
                 linkInput.value = '';
@@ -855,6 +863,103 @@ function setupEventListeners() {
             } finally {
                 submitLinkBtn.disabled = false;
                 submitLinkBtn.innerHTML = `<i data-lucide="check"></i> <span>Link & Fetch</span>`;
+                if (window.lucide) lucide.createIcons();
+            }
+        });
+    }
+
+    async function loadWishlistLocalCandidates(searchValue = '') {
+        if (!currentGame || currentGame.file_type !== 'wishlist' || !localLinkSelect) return;
+        localLinkSelect.innerHTML = '<option value="">Loading local entries...</option>';
+        try {
+            const query = searchValue.trim()
+                ? `?search=${encodeURIComponent(searchValue.trim())}`
+                : '';
+            const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/linkable-local${query}`);
+            if (!res.ok) {
+                throw new Error('Failed to load local link candidates');
+            }
+            const items = await res.json();
+            if (!items.length) {
+                localLinkSelect.innerHTML = '<option value="">No matching local entries found</option>';
+                return;
+            }
+            localLinkSelect.innerHTML = items.map(item => {
+                const pathTail = item.folder_path || '';
+                const sourceLabel = item.source_type && item.source_type !== 'unknown'
+                    ? ` | ${item.source_type.toUpperCase()}`
+                    : '';
+                return `<option value="${item.id}">${item.title} (${item.file_type.toUpperCase()})${sourceLabel} - ${pathTail}</option>`;
+            }).join('');
+        } catch (err) {
+            localLinkSelect.innerHTML = '<option value="">Failed to load local entries</option>';
+        }
+    }
+
+    if (localLinkBtn && localLinkForm) {
+        localLinkBtn.addEventListener('click', async () => {
+            if (linkForm) linkForm.style.display = 'none';
+            const shouldShow = localLinkForm.style.display === 'none';
+            localLinkForm.style.display = shouldShow ? 'block' : 'none';
+            if (!shouldShow) return;
+            if (localLinkSearch) localLinkSearch.value = currentGame?.title || '';
+            await loadWishlistLocalCandidates(localLinkSearch?.value || currentGame?.title || '');
+            if (localLinkSearch) localLinkSearch.focus();
+        });
+    }
+
+    if (localLinkSearch) {
+        localLinkSearch.addEventListener('input', () => {
+            clearTimeout(localLinkSearchTimer);
+            localLinkSearchTimer = setTimeout(() => {
+                loadWishlistLocalCandidates(localLinkSearch.value || '');
+            }, 180);
+        });
+    }
+
+    if (cancelLocalLinkBtn && localLinkForm) {
+        cancelLocalLinkBtn.addEventListener('click', () => {
+            localLinkForm.style.display = 'none';
+            if (localLinkSearch) localLinkSearch.value = '';
+            if (localLinkSelect) localLinkSelect.innerHTML = '';
+        });
+    }
+
+    if (submitLocalLinkBtn) {
+        submitLocalLinkBtn.addEventListener('click', async () => {
+            if (!currentGame || currentGame.file_type !== 'wishlist' || !localLinkSelect) return;
+            const targetId = parseInt(localLinkSelect.value || '', 10);
+            if (!targetId) {
+                alert('Please select a scanned local entry to link.');
+                return;
+            }
+
+            submitLocalLinkBtn.disabled = true;
+            submitLocalLinkBtn.innerHTML = `<i data-lucide="loader" class="spin"></i> <span>Linking...</span>`;
+            if (window.lucide) lucide.createIcons();
+
+            try {
+                const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/link-local`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_game_id: targetId })
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Failed to link wishlist item to local entry');
+                }
+                const data = await res.json();
+                currentGame = data.game;
+                renderOverview(currentGame);
+                await Promise.allSettled([loadGames(), fetchStats(), fetchTags()]);
+                if (localLinkForm) localLinkForm.style.display = 'none';
+                if (localLinkSearch) localLinkSearch.value = '';
+                if (localLinkSelect) localLinkSelect.innerHTML = '';
+            } catch (err) {
+                alert(`Failed to link wishlist item: ${err.message}`);
+            } finally {
+                submitLocalLinkBtn.disabled = false;
+                submitLocalLinkBtn.innerHTML = `<i data-lucide="link-2"></i> <span>Link Wishlist to Local Game</span>`;
                 if (window.lucide) lucide.createIcons();
             }
         });
@@ -1217,6 +1322,7 @@ function guessEngineLabel(game) {
 
 function renderOverview(game) {
     const isExe = game.file_type === 'exe' || game.file_type === 'folder';
+    const isWishlist = game.file_type === 'wishlist';
     const currentIndex = allGames.findIndex(entry => entry.id === game.id);
 
     // Topbar
@@ -1241,9 +1347,15 @@ function renderOverview(game) {
     document.getElementById('ov-badge-date').textContent = `RELEASED: ${game.release_date || 'N/A'}`;
     
     // Controls box
-    document.getElementById('ov-launch-text').textContent = isExe ? 'Launch' : 'Open Folder';
-    document.getElementById('ov-path-short').textContent = game.folder_path.length > 30 ? game.folder_path.substring(0, 30) + '...' : game.folder_path;
-    document.getElementById('ov-type-text').textContent = isExe ? 'INSTALLED EXE' : 'ZIP/RAR ARCHIVE';
+    document.getElementById('ov-launch-text').textContent = isWishlist ? 'Wishlist Item' : (isExe ? 'Launch' : 'Open Folder');
+    document.getElementById('ov-path-short').textContent = isWishlist
+        ? 'No local folder linked yet'
+        : (game.folder_path.length > 30 ? game.folder_path.substring(0, 30) + '...' : game.folder_path);
+    document.getElementById('ov-type-text').textContent = isWishlist ? 'WISHLIST ENTRY' : (isExe ? 'INSTALLED EXE' : 'ZIP/RAR ARCHIVE');
+    const launchBtn = document.getElementById('ov-btn-launch');
+    const folderBtn = document.getElementById('ov-btn-folder');
+    if (launchBtn) launchBtn.disabled = isWishlist;
+    if (folderBtn) folderBtn.disabled = isWishlist;
     
     // Metrics
     updateStarPickerUI(game.user_score);
@@ -1251,7 +1363,7 @@ function renderOverview(game) {
     document.getElementById('ov-platform-score').textContent = normalizeRatingText(game.rating);
     document.getElementById('ov-progress-select').value = game.playing_progress || 'unplayed';
     document.getElementById('ov-size-text').textContent = `${game.file_type.toUpperCase()} | ${game.folder_path}`;
-    document.getElementById('ov-folder-full').textContent = game.folder_path || 'Unknown path';
+    document.getElementById('ov-folder-full').textContent = isWishlist ? 'Link this wishlist item to a scanned local folder or executable.' : (game.folder_path || 'Unknown path');
     document.getElementById('ov-local-version-text').textContent = game.local_version || 'Unknown';
     document.getElementById('ov-latest-version-text').textContent = game.latest_version || 'Not fetched';
     document.getElementById('ov-added-at-text').textContent = formatDateTime(game.added_at);
@@ -1383,6 +1495,14 @@ function renderOverview(game) {
     if (linkFormEl) linkFormEl.style.display = 'none';
     const linkInputEl = document.getElementById('ov-link-url-input');
     if (linkInputEl) linkInputEl.value = '';
+    const localLinkBtnEl = document.getElementById('ov-btn-link-local');
+    if (localLinkBtnEl) localLinkBtnEl.style.display = isWishlist ? 'flex' : 'none';
+    const localLinkFormEl = document.getElementById('ov-local-link-form');
+    if (localLinkFormEl) localLinkFormEl.style.display = 'none';
+    const localLinkSearchEl = document.getElementById('ov-local-link-search');
+    if (localLinkSearchEl) localLinkSearchEl.value = '';
+    const localLinkSelectEl = document.getElementById('ov-local-link-select');
+    if (localLinkSelectEl) localLinkSelectEl.innerHTML = '';
 
     // Update "Wrong Data" button label based on source state
     const wrongBtn = document.getElementById('ov-btn-mark-wrong');
