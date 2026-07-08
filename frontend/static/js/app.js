@@ -1,4 +1,4 @@
-﻿const API_BASE = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1') 
+const API_BASE = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1') 
     ? '' 
     : 'http://127.0.0.1:8765';
 
@@ -8,6 +8,69 @@ let isTranslated = false;
 let originalMetadata = null;
 let lastGridScrollPos = 0;
 let appSettings = null;
+let activeSettingsJobKey = null;
+let activeScanJobKey = null;
+let activeScanModeKey = null;
+let currentSmartScanResult = null;
+let lastSettingsMetadataQueueRefreshAt = 0;
+const SMART_SCAN_JOB_KEY = 'smart-scan';
+const MISSING_SOURCE_SCAN_JOB_KEY = 'missing-source-scan';
+const SCAN_JOB_DEFINITIONS = {
+    [SMART_SCAN_JOB_KEY]: {
+        jobKey: SMART_SCAN_JOB_KEY,
+        startUrl: `${API_BASE}/api/library/smart-scan`,
+        toolbarLabel: 'Smart scan running',
+        resultsTitle: 'Smart Metadata Scan',
+        resultsCopy: 'Track unresolved metadata matches and review anything that still needs attention.',
+        reviewTitle: 'Review Unresolved Games',
+        reviewCopy: 'Apply the best candidate when you agree with the match, or skip it and resolve the game later.',
+        eyebrow: 'Smart Metadata Scan',
+        cancelledEyebrow: 'Smart Metadata Scan Cancelled',
+    },
+    [MISSING_SOURCE_SCAN_JOB_KEY]: {
+        jobKey: MISSING_SOURCE_SCAN_JOB_KEY,
+        startUrl: `${API_BASE}/api/library/missing-source-scan`,
+        toolbarLabel: 'Missing source scan running',
+        resultsTitle: 'Missing Source Scan',
+        resultsCopy: 'Track missing primary source matches and review anything that still needs attention.',
+        reviewTitle: 'Review Missing Sources',
+        reviewCopy: 'Apply the best source candidate when it looks correct, or skip it and resolve the game later.',
+        eyebrow: 'Missing Source Scan',
+        cancelledEyebrow: 'Missing Source Scan Cancelled',
+    },
+};
+const SETTINGS_JOB_DEFINITIONS = {
+    'fix-metadata': {
+        buttonId: 'btn-fix-metadata',
+        startUrl: `${API_BASE}/api/library/fix-metadata`,
+        initialMessage: 'Fixing titles, covers, and screenshots across your library...',
+        genericFailureMessage: 'Failed to fix titles and refetch metadata',
+        idleHtml: `<i data-lucide="wand-2"></i> <span>Fix Titles & Refetch All Metadata</span>`,
+        loadingHtml: `<i data-lucide="loader" class="spin"></i> <span>Fixing Titles & Refetching Metadata (Please wait)...</span>`,
+    },
+    'rematch-f95zone': {
+        buttonId: 'btn-rematch-f95',
+        startUrl: `${API_BASE}/api/library/rematch-f95zone`,
+        initialMessage: 'Rematching unidentified games against F95Zone and refreshing matches...',
+        genericFailureMessage: 'Failed to rematch F95Zone titles',
+        idleHtml: `<i data-lucide="search"></i> <span>Rematch Unidentified Games from F95Zone</span>`,
+        loadingHtml: `<i data-lucide="loader" class="spin"></i> <span>Rematching and Scraping from F95Zone (Please wait)...</span>`,
+    },
+    'flush-metadata': {
+        buttonId: 'btn-flush-metadata',
+        startUrl: `${API_BASE}/api/library/flush-metadata`,
+        initialMessage: 'Removing scraped metadata while keeping local records and source links intact...',
+        genericFailureMessage: 'Failed to flush scraped metadata',
+        idleHtml: `<i data-lucide="trash-2"></i> <span>Flush All Scraped Metadata</span>`,
+        loadingHtml: `<i data-lucide="loader" class="spin"></i> <span>Flushing Scraped Metadata (Please wait)...</span>`,
+        requestInit: {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirmation_phrase: 'FLUSH' }),
+        },
+    },
+};
+const SETTINGS_JOB_KEYS = Object.keys(SETTINGS_JOB_DEFINITIONS);
 
 function renderTranslateButtonLabel(mode = 'translate') {
     const label = mode === 'revert' ? 'Revert' : 'Translate';
@@ -19,6 +82,986 @@ function normalizeRatingText(value) {
     return String(value)
         .replace(/(\d+(?:\.\d+)?)\s*[^\w\s\/().,-]{1,6}\s*\(([^)]+)\)/g, '$1 / 5 ($2)')
         .replace(/(\d+(?:\.\d+)?)\s*[^\w\s\/().,-]{1,6}$/g, '$1 / 5');
+}
+
+function getPreferredSourcePlatform() {
+    const selectedValue = document.getElementById('set-preferred-source')?.value;
+    const preferred = String(selectedValue || appSettings?.preferred_source || 'f95zone').toLowerCase();
+    return ['f95zone', 'dlsite', 'itch', 'steam', 'all'].includes(preferred) ? preferred : 'f95zone';
+}
+
+function formatSourceLabel(source) {
+    const key = String(source || '').toLowerCase();
+    if (key === 'f95zone') return 'F95Zone';
+    if (key === 'dlsite') return 'DLsite';
+    if (key === 'itch') return 'Itch.io';
+    if (key === 'steam') return 'Steam';
+    if (key === 'all') return 'All Sources';
+    return key ? key.toUpperCase() : 'Unknown';
+}
+
+function getPreferredSourceSummary(source) {
+    const key = String(source || '').toLowerCase();
+    if (key === 'dlsite') {
+        return 'will be searched first when smart scan and unresolved-match flows need a starting provider.';
+    }
+    if (key === 'itch') {
+        return 'will open first for indie-heavy search flows and be queried before the other automatic metadata providers.';
+    }
+    return 'will be queried first by smart metadata scan and opened first in the search modals that resolve uncertain matches.';
+}
+
+function renderSettingsPreferredSource(source) {
+    const label = formatSourceLabel(source || appSettings?.preferred_source || 'f95zone');
+    const summary = getPreferredSourceSummary(source || appSettings?.preferred_source || 'f95zone');
+
+    const heroLabel = document.getElementById('settings-kpi-source');
+    if (heroLabel) heroLabel.textContent = label;
+
+    const heroDetail = document.getElementById('settings-kpi-source-detail');
+    if (heroDetail) heroDetail.textContent = `${label} is used first for smart scan and search defaults.`;
+
+    const badge = document.getElementById('settings-source-active-badge');
+    if (badge) badge.textContent = label;
+
+    const summaryEl = document.getElementById('settings-source-summary');
+    if (summaryEl) summaryEl.textContent = summary;
+}
+
+function renderSettingsSummary(stats) {
+    const total = Number(stats?.total || 0);
+    const installed = Number(stats?.installed || 0);
+    const archives = Number(stats?.archives || 0);
+    const wishlist = Number(stats?.wishlist || 0);
+    const unidentified = Number(stats?.unidentified || 0);
+
+    const heroTotal = document.getElementById('settings-kpi-library-total');
+    if (heroTotal) heroTotal.textContent = String(total);
+
+    const heroDetail = document.getElementById('settings-kpi-library-detail');
+    if (heroDetail) heroDetail.textContent = `Installed ${installed}, archives ${archives}, wishlist ${wishlist}`;
+
+    const unresolvedCount = document.getElementById('settings-kpi-unresolved-count');
+    if (unresolvedCount) unresolvedCount.textContent = String(unidentified);
+
+    const unresolvedDetail = document.getElementById('settings-kpi-unresolved-detail');
+    if (unresolvedDetail) {
+        unresolvedDetail.textContent = unidentified === 1
+            ? '1 local entry still needs a confident identification or source match.'
+            : `${unidentified} local entries still need a confident identification or source match.`;
+    }
+
+    const libraryCount = document.getElementById('settings-library-count');
+    if (libraryCount) libraryCount.textContent = String(total);
+
+    const installedCount = document.getElementById('settings-installed-count');
+    if (installedCount) installedCount.textContent = String(installed);
+
+    const archivesCount = document.getElementById('settings-archives-count');
+    if (archivesCount) archivesCount.textContent = String(archives);
+
+    const wishlistCount = document.getElementById('settings-wishlist-count');
+    if (wishlistCount) wishlistCount.textContent = String(wishlist);
+
+    renderSettingsPreferredSource(appSettings?.preferred_source || 'f95zone');
+}
+
+function renderSettingsExtensionStatus(status) {
+    const connected = !!(status?.connected || status?.status === 'connected');
+    const version = status?.version ? ` v${status.version}` : '';
+    const statusText = connected ? `Connected${version}` : 'Offline';
+    const detailText = connected
+        ? 'Chrome companion heartbeat is active and background queue work can be monitored.'
+        : 'No heartbeat detected from Chrome. Load the unpacked extension and keep the browser running.';
+
+    const pill = document.getElementById('settings-extension-status');
+    if (pill) {
+        pill.textContent = statusText;
+        pill.classList.toggle('connected', connected);
+        pill.classList.toggle('offline', !connected);
+    }
+
+    const detail = document.getElementById('settings-extension-detail');
+    if (detail) detail.textContent = detailText;
+
+    const heroStatus = document.getElementById('settings-kpi-companion');
+    if (heroStatus) heroStatus.textContent = statusText;
+
+    const heroDetail = document.getElementById('settings-kpi-companion-detail');
+    if (heroDetail) heroDetail.textContent = connected ? 'Companion is online and ready for queue work.' : 'Waiting for the Chrome companion heartbeat.';
+}
+
+async function refreshSettingsMetadataQueue({ force = false } = {}) {
+    const list = document.getElementById('settings-metadata-queue-list');
+    const count = document.getElementById('settings-metadata-queue-count');
+    const detail = document.getElementById('settings-metadata-queue-detail');
+    if (!list && !count && !detail) return;
+
+    const now = Date.now();
+    if (!force && now - lastSettingsMetadataQueueRefreshAt < 10000) return;
+    lastSettingsMetadataQueueRefreshAt = now;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/games/needs-metadata`);
+        if (!res.ok) throw new Error('Failed to load metadata queue');
+
+        const games = await res.json();
+        const queueCount = Array.isArray(games) ? games.length : 0;
+
+        if (count) count.textContent = String(queueCount);
+        if (detail) {
+            detail.textContent = queueCount === 0
+                ? 'All identified games currently have covers and screenshots.'
+                : `${queueCount} identified game${queueCount === 1 ? '' : 's'} still need cover art or screenshots.`;
+        }
+
+        if (!list) return;
+        if (!queueCount) {
+            list.innerHTML = '<div class="settings-queue-empty">All identified games currently have their metadata queue cleared.</div>';
+            return;
+        }
+
+        list.innerHTML = games.slice(0, 5).map((game) => {
+            const sourceLabel = formatSourceLabel(game.source_type || 'unknown');
+            const localPath = game.folder_path || 'No local path recorded';
+            return `
+                <div class="settings-queue-item">
+                    <strong>${game.title || game.raw_name || 'Unknown title'}</strong>
+                    <span>${sourceLabel} · ${localPath}</span>
+                </div>
+            `;
+        }).join('');
+    } catch (error) {
+        if (detail) detail.textContent = 'Unable to load the current queue snapshot.';
+        if (list) list.innerHTML = '<div class="settings-queue-empty">Metadata queue is unavailable right now.</div>';
+    }
+}
+
+function showSettingsJobProgress(message) {
+    const shell = document.getElementById('settings-job-progress');
+    const label = document.getElementById('settings-job-progress-label');
+    const fill = document.getElementById('settings-job-progress-fill');
+    const count = document.getElementById('settings-job-progress-count');
+    const percent = document.getElementById('settings-job-progress-percent');
+    const current = document.getElementById('settings-job-progress-current');
+    if (!shell || !label || !fill || !count || !percent || !current) return;
+
+    label.textContent = message;
+    count.textContent = '0 / 0';
+    percent.textContent = '0%';
+    current.textContent = 'Waiting for the backend to begin...';
+    shell.hidden = false;
+    fill.style.width = '0%';
+}
+
+function hideSettingsJobProgress() {
+    const shell = document.getElementById('settings-job-progress');
+    const fill = document.getElementById('settings-job-progress-fill');
+    if (!shell || !fill) return;
+
+    shell.hidden = true;
+    fill.style.width = '0%';
+}
+
+async function readJsonResponse(res) {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        return { detail: text };
+    }
+}
+
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function getScanJobDefinition(scanKey = null) {
+    const key = scanKey || activeScanModeKey || activeScanJobKey || SMART_SCAN_JOB_KEY;
+    return SCAN_JOB_DEFINITIONS[key] || SCAN_JOB_DEFINITIONS[SMART_SCAN_JOB_KEY];
+}
+
+function setMetadataActionBusyState(isBusy, activeButtonId = null) {
+    SETTINGS_JOB_KEYS.forEach((jobKey) => {
+        const definition = SETTINGS_JOB_DEFINITIONS[jobKey];
+        const button = document.getElementById(definition.buttonId);
+        if (!button) return;
+        button.disabled = isBusy;
+        button.innerHTML = activeButtonId === definition.buttonId ? definition.loadingHtml : definition.idleHtml;
+    });
+
+    if (window.lucide) lucide.createIcons();
+}
+
+function renderSettingsJobProgress(state) {
+    const label = document.getElementById('settings-job-progress-label');
+    const fill = document.getElementById('settings-job-progress-fill');
+    const count = document.getElementById('settings-job-progress-count');
+    const percent = document.getElementById('settings-job-progress-percent');
+    const current = document.getElementById('settings-job-progress-current');
+    if (!label || !fill || !count || !percent || !current || !state) return;
+
+    const total = Number(state.total || 0);
+    const completed = Number(state.completed || 0);
+    const safePercent = Math.max(0, Math.min(100, Number(state.percent || 0)));
+
+    label.textContent = state.label || 'Working through your library...';
+    count.textContent = `${completed} / ${total}`;
+    percent.textContent = `${safePercent}%`;
+    current.textContent = state.current_title
+        ? `${state.detail || 'Processing...'} ${state.current_title}`
+        : (state.detail || 'Preparing library job...');
+    fill.style.width = `${safePercent}%`;
+}
+
+async function getSettingsJobState(jobKey) {
+    const res = await fetch(`${API_BASE}/api/library/jobs/${jobKey}`);
+    const state = await readJsonResponse(res);
+    if (!res.ok) {
+        throw new Error(state.detail || `Failed to read ${jobKey} job progress`);
+    }
+    return state;
+}
+
+async function pollSettingsJobProgress(jobKey) {
+    let pollFailures = 0;
+    while (activeSettingsJobKey === jobKey) {
+        try {
+            const state = await getSettingsJobState(jobKey);
+            pollFailures = 0;
+            renderSettingsJobProgress(state);
+
+            if (state.status === 'completed') {
+                await Promise.allSettled([fetchStats(), loadGames(), fetchTags()]);
+                alert(state.summary || 'Library job completed.');
+                hideSettingsJobProgress();
+                activeSettingsJobKey = null;
+                return;
+            }
+
+            if (state.status === 'failed') {
+                hideSettingsJobProgress();
+                activeSettingsJobKey = null;
+                throw new Error(state.error || 'Library job failed');
+            }
+        } catch (err) {
+            pollFailures += 1;
+            if (pollFailures >= 5) {
+                hideSettingsJobProgress();
+                activeSettingsJobKey = null;
+                throw err;
+            }
+            await wait(600 * pollFailures);
+            continue;
+        }
+
+        await wait(350);
+    }
+}
+
+async function resumeActiveSettingsJob(preferredJobKey = null, options = {}) {
+    const { showAlertOnFailure = false } = options;
+    const orderedJobKeys = preferredJobKey
+        ? [preferredJobKey, ...SETTINGS_JOB_KEYS.filter(jobKey => jobKey !== preferredJobKey)]
+        : SETTINGS_JOB_KEYS;
+
+    for (const jobKey of orderedJobKeys) {
+        try {
+            const state = await getSettingsJobState(jobKey);
+            if (state.status !== 'running') continue;
+
+            const definition = SETTINGS_JOB_DEFINITIONS[jobKey];
+            activeSettingsJobKey = jobKey;
+            showSettingsJobProgress(state.label || definition.initialMessage);
+            renderSettingsJobProgress(state);
+            setMetadataActionBusyState(true, definition.buttonId);
+
+            try {
+                await pollSettingsJobProgress(jobKey);
+            } finally {
+                setMetadataActionBusyState(false);
+            }
+
+            return true;
+        } catch (err) {
+            if (showAlertOnFailure) {
+                const definition = SETTINGS_JOB_DEFINITIONS[jobKey];
+                alert(`${definition.genericFailureMessage}: ${err.message}`);
+            }
+            break;
+        }
+    }
+
+    return false;
+}
+
+function confirmFlushAllMetadata() {
+    const firstConfirmed = confirm('This will remove scraped covers, screenshots, descriptions, ratings, versions, and scraped tags from every game in your library. Local files, source links, custom tags, and notes will be kept. Continue?');
+    if (!firstConfirmed) return false;
+
+    const phrase = prompt('Type FLUSH to permanently remove scraped metadata from every game.', '');
+    if (phrase === null) return false;
+    if (phrase.trim().toUpperCase() !== 'FLUSH') {
+        alert('Flush cancelled. Confirmation phrase did not match.');
+        return false;
+    }
+
+    return true;
+}
+
+async function startSettingsTrackedJob(jobKey, requestInit = null) {
+    const definition = SETTINGS_JOB_DEFINITIONS[jobKey];
+    if (!definition) return;
+
+    if (activeSettingsJobKey === jobKey) return;
+    if (activeSettingsJobKey && activeSettingsJobKey !== jobKey) {
+        alert('Another library metadata job is already running. Please wait for it to finish.');
+        return;
+    }
+
+    activeSettingsJobKey = jobKey;
+    showSettingsJobProgress(definition.initialMessage);
+    setMetadataActionBusyState(true, definition.buttonId);
+    try {
+        const res = await fetch(definition.startUrl, requestInit || definition.requestInit || { method: 'POST' });
+        const data = await readJsonResponse(res);
+        if (!res.ok) {
+            if (res.status === 409) {
+                const resumed = await resumeActiveSettingsJob(jobKey, { showAlertOnFailure: true });
+                if (resumed) return;
+            }
+            throw new Error(data.detail || definition.genericFailureMessage);
+        }
+        renderSettingsJobProgress(data);
+        await pollSettingsJobProgress(jobKey);
+    } catch (err) {
+        hideSettingsJobProgress();
+        activeSettingsJobKey = null;
+        alert(`${definition.genericFailureMessage}: ${err.message}`);
+    } finally {
+        setMetadataActionBusyState(false);
+    }
+}
+
+async function getLibraryJobState(jobKey) {
+    const res = await fetch(`${API_BASE}/api/library/jobs/${jobKey}`);
+    const state = await readJsonResponse(res);
+    if (!res.ok) {
+        throw new Error(state.detail || `Failed to read ${jobKey} job status`);
+    }
+    return state;
+}
+
+async function openExternalUrl(url) {
+    if (!url) return;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_external_url) {
+        const opened = await window.pywebview.api.open_external_url(url);
+        if (opened) return;
+    }
+    window.open(url, '_blank');
+}
+
+function buildSourceBrowserSearchUrl(query, platform = 'all') {
+    const trimmedQuery = (query || '').trim();
+    if (!trimmedQuery) return '';
+
+    const encodedQuery = encodeURIComponent(trimmedQuery);
+    if (platform === 'dlsite') return `https://www.google.com/search?q=site:dlsite.com+${encodedQuery}`;
+    if (platform === 'itch') return `https://www.google.com/search?q=site:itch.io+${encodedQuery}`;
+    if (platform === 'f95zone') return `https://www.google.com/search?q=site:f95zone.to+${encodedQuery}`;
+    if (platform === 'steam') return `https://www.google.com/search?q=site:store.steampowered.com+${encodedQuery}`;
+    return `https://www.google.com/search?q=${encodedQuery}`;
+}
+
+function setScanWorkflowView(viewId) {
+    ['scan-workflow-choice-view'].forEach((id) => {
+        const view = document.getElementById(id);
+        if (view) {
+            view.hidden = id !== viewId;
+        }
+    });
+}
+
+function setScanResultsView(viewId) {
+    ['scan-results-progress-view', 'scan-results-summary-view', 'scan-results-review-view'].forEach((id) => {
+        const view = document.getElementById(id);
+        if (view) {
+            view.hidden = id !== viewId;
+        }
+    });
+}
+
+function showScanWorkflowModal() {
+    const modal = document.getElementById('scan-workflow-modal');
+    const backdrop = document.getElementById('scan-workflow-backdrop');
+    if (modal) modal.style.display = 'block';
+    if (backdrop) backdrop.style.display = 'block';
+}
+
+function closeScanWorkflowModal(force = false) {
+    if (!force && activeScanJobKey) return;
+    const modal = document.getElementById('scan-workflow-modal');
+    const backdrop = document.getElementById('scan-workflow-backdrop');
+    if (modal) modal.style.display = 'none';
+    if (backdrop) backdrop.style.display = 'none';
+    if (!activeScanJobKey) {
+        setScanWorkflowView('scan-workflow-choice-view');
+    }
+}
+
+function showScanResultsModal() {
+    const modal = document.getElementById('scan-results-modal');
+    const backdrop = document.getElementById('scan-results-backdrop');
+    if (modal) modal.style.display = 'block';
+    if (backdrop) backdrop.style.display = 'block';
+}
+
+function closeScanResultsModal(force = false) {
+    const modal = document.getElementById('scan-results-modal');
+    const backdrop = document.getElementById('scan-results-backdrop');
+    if (modal) modal.style.display = 'none';
+    if (backdrop) backdrop.style.display = 'none';
+    if (!activeScanJobKey || force) {
+        setScanResultsView('scan-results-summary-view');
+    }
+}
+
+function formatSmartScanSource(sourceType) {
+    const source = String(sourceType || '').toLowerCase();
+    if (source === 'f95zone') return 'F95Zone';
+    if (source === 'dlsite') return 'DLsite';
+    if (source === 'itch') return 'itch.io';
+    return sourceType || 'Waiting...';
+}
+
+function getVisibleSmartScanReviewItems() {
+    return (currentSmartScanResult?.review_items || []).filter(item => !item.dismissed);
+}
+
+function syncSmartScanResultFromState(state) {
+    const scanDefinition = getScanJobDefinition(state?.job_key);
+    activeScanModeKey = scanDefinition.jobKey;
+    if (!state) return;
+    currentSmartScanResult = {
+        ...(currentSmartScanResult || {}),
+        scanModeKey: scanDefinition.jobKey,
+        processed: Number(state.completed || 0),
+        total: Number(state.total || 0),
+        matched: Number(state.matched_count || 0),
+        manual_review: Number(state.manual_review_count || 0),
+        not_found: Number(state.not_found_count || 0),
+        failed: Number(state.failed_count || 0),
+        review_items: currentSmartScanResult?.review_items || [],
+        cancelled: state.status === 'cancelled',
+    };
+}
+
+function renderScanToolbarProgress(state) {
+    const shell = document.getElementById('scan-toolbar-progress');
+    const label = document.getElementById('scan-toolbar-progress-label');
+    const count = document.getElementById('scan-toolbar-progress-count');
+    const fill = document.getElementById('scan-toolbar-progress-fill');
+    if (!shell || !label || !count || !fill) return;
+
+    const scanDefinition = getScanJobDefinition(state?.job_key);
+    const total = Number(state?.total || 0);
+    const completed = Number(state?.completed || 0);
+    const currentIndex = Number(state?.current_index || completed || 0);
+    const safeCurrent = total > 0 ? Math.min(total, Math.max(completed, currentIndex || completed)) : completed;
+    const percent = Math.max(0, Math.min(100, Number(state?.percent || 0)));
+
+    label.textContent = state?.cancel_requested ? `Cancelling ${scanDefinition.toolbarLabel.toLowerCase()}` : scanDefinition.toolbarLabel;
+    count.textContent = total > 0 ? `${safeCurrent} / ${total}` : '0 / 0';
+    fill.style.width = `${percent}%`;
+    shell.hidden = false;
+}
+
+function hideScanToolbarProgress() {
+    const shell = document.getElementById('scan-toolbar-progress');
+    const label = document.getElementById('scan-toolbar-progress-label');
+    const count = document.getElementById('scan-toolbar-progress-count');
+    const fill = document.getElementById('scan-toolbar-progress-fill');
+    const scanDefinition = getScanJobDefinition();
+    if (shell) shell.hidden = true;
+    if (label) label.textContent = scanDefinition.toolbarLabel;
+    if (count) count.textContent = '0 / 0';
+    if (fill) fill.style.width = '0%';
+}
+
+function renderSmartScanProgress(state) {
+    syncSmartScanResultFromState(state);
+    const scanDefinition = getScanJobDefinition(state?.job_key);
+    setScanResultsView('scan-results-progress-view');
+    const total = Number(state?.total || 0);
+    const completed = Number(state?.completed || 0);
+    const currentIndex = Number(state?.current_index || (state?.status === 'running' ? Math.min(total || 1, completed + 1) : completed));
+    const percent = Math.max(0, Math.min(100, Number(state?.percent || 0)));
+    const currentName = state?.current_title || 'Waiting for the backend to begin...';
+    const currentSource = state?.current_source ? formatSmartScanSource(state.current_source) : 'Waiting...';
+    const currentQuery = state?.current_query ? `"${state.current_query}"` : 'Waiting...';
+    const detail = state?.detail || 'Preparing unresolved games...';
+
+    document.getElementById('scan-results-title').textContent = scanDefinition.resultsTitle;
+    document.getElementById('scan-results-copy').textContent = scanDefinition.resultsCopy;
+    document.getElementById('smart-scan-status-title').textContent = state?.cancel_requested ? `Cancelling ${scanDefinition.resultsTitle.toLowerCase()}...` : 'Scanning metadata...';
+    document.getElementById('smart-scan-status-text').textContent = detail;
+    document.getElementById('smart-scan-game-counter').textContent = `Game ${Math.max(total ? 1 : 0, currentIndex)} / ${total}`;
+    document.getElementById('smart-scan-progress-fill').style.width = `${percent}%`;
+    document.getElementById('smart-scan-current-name').textContent = currentName;
+    document.getElementById('smart-scan-current-source').textContent = currentSource;
+    document.getElementById('smart-scan-current-query').textContent = currentQuery;
+    document.getElementById('smart-scan-current-stage').textContent = detail;
+    document.getElementById('smart-scan-count-matched').textContent = String(state?.matched_count || 0);
+    document.getElementById('smart-scan-count-review').textContent = String(state?.manual_review_count || 0);
+    document.getElementById('smart-scan-count-not-found').textContent = String(state?.not_found_count || 0);
+    document.getElementById('smart-scan-count-failed').textContent = String(state?.failed_count || 0);
+
+    const cancelButton = document.getElementById('btn-smart-scan-cancel');
+    if (cancelButton) {
+        cancelButton.disabled = !!state?.cancel_requested;
+        cancelButton.innerHTML = state?.cancel_requested
+            ? `<i data-lucide="loader" class="spin"></i><span>Cancelling...</span>`
+            : `<i data-lucide="x-circle"></i><span>Cancel</span>`;
+    }
+    if (window.lucide) lucide.createIcons();
+}
+
+function renderSmartScanSummary(state = null) {
+    const scanDefinition = getScanJobDefinition(state?.job_key || currentSmartScanResult?.scanModeKey);
+    setScanResultsView('scan-results-summary-view');
+    const fallbackResult = {
+        processed: Number(state?.completed || 0),
+        total: Number(state?.total || 0),
+        matched: Number(state?.matched_count || 0),
+        manual_review: Number(state?.manual_review_count || 0),
+        not_found: Number(state?.not_found_count || 0),
+        failed: Number(state?.failed_count || 0),
+        review_items: currentSmartScanResult?.review_items || [],
+        summary: state?.summary || state?.error || 'Smart scan finished.',
+        cancelled: state?.status === 'cancelled',
+    };
+    const result = state?.result || currentSmartScanResult || fallbackResult;
+    currentSmartScanResult = {
+        ...fallbackResult,
+        ...(currentSmartScanResult || {}),
+        ...result,
+        scanModeKey: scanDefinition.jobKey,
+        review_items: result.review_items || currentSmartScanResult?.review_items || fallbackResult.review_items,
+        cancelled: Boolean(result.cancelled || state?.status === 'cancelled'),
+    };
+
+    const summaryTitle = state?.status === 'failed'
+        ? `${scanDefinition.resultsTitle} failed`
+        : currentSmartScanResult.cancelled
+            ? `${scanDefinition.resultsTitle} cancelled`
+            : `${scanDefinition.resultsTitle} complete`;
+    document.getElementById('scan-results-title').textContent = 'Scan Results';
+    document.getElementById('scan-results-copy').textContent = 'Review what the scan changed and decide what still needs manual attention.';
+    document.getElementById('smart-scan-summary-eyebrow').textContent = currentSmartScanResult.cancelled ? scanDefinition.cancelledEyebrow : scanDefinition.eyebrow;
+    document.getElementById('smart-scan-summary-title').textContent = summaryTitle;
+    document.getElementById('smart-scan-summary-copy').textContent = currentSmartScanResult.summary || 'Smart scan finished.';
+    document.getElementById('smart-scan-summary-matched').textContent = String(currentSmartScanResult.matched || 0);
+    document.getElementById('smart-scan-summary-review').textContent = String(currentSmartScanResult.manual_review || 0);
+    document.getElementById('smart-scan-summary-not-found').textContent = String(currentSmartScanResult.not_found || 0);
+    document.getElementById('smart-scan-summary-failed').textContent = String(currentSmartScanResult.failed || 0);
+
+    const reviewButton = document.getElementById('btn-smart-scan-review');
+    if (reviewButton) {
+        reviewButton.style.display = getVisibleSmartScanReviewItems().length > 0 ? 'inline-flex' : 'none';
+    }
+    if (window.lucide) lucide.createIcons();
+}
+
+function renderSmartScanReviewList(reviewItems = null) {
+    const scanDefinition = getScanJobDefinition(currentSmartScanResult?.scanModeKey);
+    setScanResultsView('scan-results-review-view');
+    document.getElementById('scan-results-title').textContent = scanDefinition.reviewTitle;
+    document.getElementById('scan-results-copy').textContent = scanDefinition.reviewCopy;
+    const list = document.getElementById('smart-scan-review-list');
+    if (!list) return;
+
+    const items = (reviewItems || getVisibleSmartScanReviewItems()).filter(item => !item.dismissed);
+    if (!items.length) {
+        list.innerHTML = `
+            <div class="smart-review-card">
+                <span class="smart-review-label">All clear</span>
+                <strong>No unresolved games remain in this smart-scan batch.</strong>
+                <p class="smart-review-empty">Close the modal or run another smart scan whenever you want to retry unresolved entries.</p>
+            </div>
+        `;
+        return;
+    }
+
+    list.innerHTML = items.map((item) => {
+        const statusClass = String(item.status || 'review').replace('-', '_');
+        const statusLabel = item.status === 'not_found'
+            ? 'No match found'
+            : item.status === 'failed'
+                ? 'Source error'
+                : 'Needs review';
+        const groupedCandidates = (item.candidates || []).reduce((groups, candidate) => {
+            const key = candidate.source_type || 'unknown';
+            groups[key] = groups[key] || [];
+            groups[key].push(candidate);
+            return groups;
+        }, {});
+        const candidateGroups = Object.entries(groupedCandidates).map(([source, candidates]) => `
+            <div class="smart-review-source-group">
+                <div class="smart-review-source-head">
+                    <span class="pill-primary">${escapeHtml(formatSmartScanSource(source).toUpperCase())}</span>
+                    <span class="smart-review-empty">${candidates.length} candidate${candidates.length === 1 ? '' : 's'}</span>
+                </div>
+                ${candidates.map((candidate) => {
+                    const confidenceClass = String(candidate.confidence || 'low').toLowerCase();
+                    const candidatePayload = encodeURIComponent(JSON.stringify({
+                        source_type: candidate.source_type,
+                        source_url: candidate.url,
+                        source_id: candidate.source_id || null,
+                        title: candidate.title || '',
+                        creator: candidate.creator || '',
+                        cover: candidate.cover || '',
+                        version: candidate.version || '',
+                    }));
+                    const reasonText = Array.isArray(candidate.reasons) && candidate.reasons.length
+                        ? candidate.reasons.join(', ')
+                        : 'Low-signal match';
+                    return `
+                        <div class="smart-review-candidate">
+                            <div class="smart-review-candidate-copy">
+                                <div class="smart-review-candidate-title">
+                                    <strong>${escapeHtml(candidate.title || 'Unknown title')}</strong>
+                                    <span class="confidence-chip ${escapeHtml(confidenceClass)}">${escapeHtml(candidate.confidence || 'low')}</span>
+                                </div>
+                                <div class="smart-review-candidate-meta">Developer / circle: ${escapeHtml(candidate.creator || 'Unknown')}</div>
+                                <div class="smart-review-candidate-meta">Reason: ${escapeHtml(reasonText)}</div>
+                                <div class="smart-review-candidate-meta">Score: ${escapeHtml(candidate.score || 0)}${candidate.matched_query ? ` | Query: ${escapeHtml(candidate.matched_query)}` : ''}</div>
+                                ${candidate.url ? `<a href="${escapeHtml(candidate.url)}" class="smart-review-link" target="_blank">${escapeHtml(candidate.url)}</a>` : ''}
+                            </div>
+                            <div class="smart-review-candidate-actions">
+                                <button type="button" class="btn-primary btn-apply-smart-review" data-game-id="${item.game_id}" data-candidate="${candidatePayload}">
+                                    <i data-lucide="check"></i>
+                                    <span>Apply Metadata</span>
+                                </button>
+                                <button type="button" class="btn-secondary btn-view-smart-review" data-url="${escapeHtml(candidate.url || '')}">
+                                    <i data-lucide="external-link"></i>
+                                    <span>View Candidate</span>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `).join('');
+
+        const thumbnailMarkup = item.thumbnail_url
+            ? `<img src="${escapeHtml(item.thumbnail_url)}" alt="${escapeHtml(item.current_title || item.local_name || 'Game cover')}" class="smart-review-thumb" loading="lazy" referrerpolicy="no-referrer">`
+            : `<div class="smart-review-thumb-fallback">X</div>`;
+
+        return `
+            <div class="smart-review-card" data-game-id="${item.game_id}">
+                <div class="smart-review-body">
+                    <div class="smart-review-media">
+                        ${thumbnailMarkup}
+                    </div>
+                    <div class="smart-review-content">
+                        <div class="smart-review-top">
+                            <div>
+                                <span class="smart-review-label">Local game</span>
+                                <h5 class="smart-review-title">${escapeHtml(item.local_name || item.current_title || 'Unknown')}</h5>
+                                <p class="smart-review-copy">Current title: ${escapeHtml(item.current_title || 'Unknown')}<br>Metadata status: ${escapeHtml(item.metadata_status || 'Needs verification')}</p>
+                            </div>
+                            <span class="smart-review-status ${statusClass}">${escapeHtml(statusLabel)}</span>
+                        </div>
+                        ${candidateGroups || `<div class="smart-review-empty">No matching game found.</div>`}
+                        ${item.error_summary ? `<div class="smart-review-empty">Details: ${escapeHtml(item.error_summary)}</div>` : ''}
+                        <div class="smart-review-row-actions">
+                            <button type="button" class="btn-secondary btn-dismiss-smart-review" data-game-id="${item.game_id}">
+                                <i data-lucide="clock-3"></i>
+                                <span>${item.status === 'review' ? 'Skip' : 'Resolve later'}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    list.querySelectorAll('.btn-view-smart-review').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const url = button.dataset.url;
+            if (url) await openExternalUrl(url);
+        });
+    });
+
+    list.querySelectorAll('.btn-dismiss-smart-review').forEach((button) => {
+        button.addEventListener('click', () => {
+            const gameId = Number(button.dataset.gameId || 0);
+            currentSmartScanResult.review_items = (currentSmartScanResult.review_items || []).map((item) =>
+                item.game_id === gameId ? { ...item, dismissed: true } : item,
+            );
+            renderSmartScanReviewList();
+        });
+    });
+
+    list.querySelectorAll('.btn-apply-smart-review').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const gameId = Number(button.dataset.gameId || 0);
+            if (!gameId || !button.dataset.candidate) return;
+            const candidate = JSON.parse(decodeURIComponent(button.dataset.candidate));
+            const originalHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = `<i data-lucide="loader" class="spin"></i><span>Applying...</span>`;
+            if (window.lucide) lucide.createIcons();
+            try {
+                const res = await fetch(`${API_BASE}/api/library/smart-scan/review/${gameId}/apply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(candidate),
+                });
+                const data = await readJsonResponse(res);
+                if (!res.ok) {
+                    throw new Error(data.detail || 'Failed to apply metadata');
+                }
+                const reviewItem = (currentSmartScanResult.review_items || []).find((item) => item.game_id === gameId);
+                if (reviewItem) {
+                    if (reviewItem.status === 'review') currentSmartScanResult.manual_review = Math.max(0, (currentSmartScanResult.manual_review || 0) - 1);
+                    if (reviewItem.status === 'not_found') currentSmartScanResult.not_found = Math.max(0, (currentSmartScanResult.not_found || 0) - 1);
+                    if (reviewItem.status === 'failed') currentSmartScanResult.failed = Math.max(0, (currentSmartScanResult.failed || 0) - 1);
+                }
+                currentSmartScanResult.matched = Number(currentSmartScanResult.matched || 0) + 1;
+                currentSmartScanResult.review_items = (currentSmartScanResult.review_items || []).map((item) =>
+                    item.game_id === gameId ? { ...item, dismissed: true, resolved: true } : item,
+                );
+                await Promise.allSettled([fetchStats(), fetchTags(), loadGames()]);
+                renderSmartScanReviewList();
+                if (data.warning) alert(data.warning);
+            } catch (err) {
+                alert(`Failed to apply metadata: ${err.message}`);
+                button.disabled = false;
+                button.innerHTML = originalHtml;
+                if (window.lucide) lucide.createIcons();
+            }
+        });
+    });
+
+    if (window.lucide) lucide.createIcons();
+}
+
+let smartScanPollPromise = null;
+
+function ensureSmartScanPolling(jobKey) {
+    if (smartScanPollPromise) return smartScanPollPromise;
+    smartScanPollPromise = pollSmartScanJob(jobKey).finally(() => {
+        smartScanPollPromise = null;
+    });
+    return smartScanPollPromise;
+}
+
+async function pollSmartScanJob(jobKey) {
+    activeScanModeKey = jobKey;
+    let pollFailures = 0;
+    while (activeScanJobKey === jobKey) {
+        try {
+            const state = await getLibraryJobState(jobKey);
+            pollFailures = 0;
+            renderScanToolbarProgress(state);
+            renderSmartScanProgress(state);
+
+            if (state.status === 'completed' || state.status === 'cancelled' || state.status === 'failed') {
+                activeScanJobKey = null;
+                currentSmartScanResult = state.result || currentSmartScanResult;
+                hideScanToolbarProgress();
+                await Promise.allSettled([fetchStats(), fetchTags(), loadGames()]);
+                showScanResultsModal();
+                renderSmartScanSummary(state);
+                return;
+            }
+        } catch (err) {
+            pollFailures += 1;
+            if (pollFailures >= 5) {
+                activeScanJobKey = null;
+                hideScanToolbarProgress();
+                currentSmartScanResult = {
+                    processed: Number(currentSmartScanResult?.processed || 0),
+                    total: Number(currentSmartScanResult?.total || 0),
+                    matched: Number(currentSmartScanResult?.matched || 0),
+                    manual_review: Number(currentSmartScanResult?.manual_review || 0),
+                    not_found: Number(currentSmartScanResult?.not_found || 0),
+                    failed: Number(currentSmartScanResult?.failed || 0) + 1,
+                    review_items: currentSmartScanResult?.review_items || [],
+                    summary: `Smart scan polling failed: ${err.message}`,
+                };
+                showScanResultsModal();
+                renderSmartScanSummary({ status: 'failed', error: err.message, result: currentSmartScanResult });
+                return;
+            }
+            await wait(600 * pollFailures);
+            continue;
+        }
+
+        await wait(350);
+    }
+}
+
+async function startTrackedMetadataScan(scanKey) {
+    const scanDefinition = getScanJobDefinition(scanKey);
+    activeScanModeKey = scanDefinition.jobKey;
+    activeScanJobKey = scanDefinition.jobKey;
+    currentSmartScanResult = null;
+    closeScanWorkflowModal(true);
+    closeScanResultsModal(true);
+    const initialState = {
+        job_key: scanDefinition.jobKey,
+        status: 'running',
+        total: 0,
+        completed: 0,
+        percent: 0,
+        current_index: 0,
+        current_title: '',
+        current_source: '',
+        current_query: '',
+        detail: 'Preparing unresolved games...',
+        matched_count: 0,
+        manual_review_count: 0,
+        not_found_count: 0,
+        failed_count: 0,
+    };
+    renderScanToolbarProgress(initialState);
+    renderSmartScanProgress({
+        ...initialState,
+    });
+
+    try {
+        const res = await fetch(scanDefinition.startUrl, { method: 'POST' });
+        const data = await readJsonResponse(res);
+        if (!res.ok) {
+            activeScanJobKey = null;
+            hideScanToolbarProgress();
+            showScanWorkflowModal();
+            setScanWorkflowView('scan-workflow-choice-view');
+            throw new Error(data.detail || `Failed to start ${scanDefinition.resultsTitle.toLowerCase()}`);
+        }
+
+        if (data.status === 'completed' || data.status === 'cancelled' || data.status === 'failed') {
+            activeScanJobKey = null;
+            currentSmartScanResult = data.result || null;
+            if (currentSmartScanResult) currentSmartScanResult.scanModeKey = scanDefinition.jobKey;
+            hideScanToolbarProgress();
+            await Promise.allSettled([fetchStats(), fetchTags(), loadGames()]);
+            showScanResultsModal();
+            renderSmartScanSummary(data);
+            return;
+        }
+
+        renderScanToolbarProgress(data);
+        renderSmartScanProgress(data);
+        ensureSmartScanPolling(scanDefinition.jobKey);
+    } catch (err) {
+        activeScanJobKey = null;
+        hideScanToolbarProgress();
+        alert(`Failed to start ${scanDefinition.resultsTitle.toLowerCase()}: ${err.message}`);
+    }
+}
+
+async function startSmartScan() {
+    await startTrackedMetadataScan(SMART_SCAN_JOB_KEY);
+}
+
+async function startMissingSourceScan() {
+    await startTrackedMetadataScan(MISSING_SOURCE_SCAN_JOB_KEY);
+}
+
+async function resumeActiveSmartScanJob({ openResults = false, onlyRunning = false } = {}) {
+    for (const scanKey of Object.keys(SCAN_JOB_DEFINITIONS)) {
+        try {
+            const state = await getLibraryJobState(scanKey);
+            if (state?.status === 'running') {
+                activeScanModeKey = scanKey;
+                activeScanJobKey = scanKey;
+                currentSmartScanResult = state.result || null;
+                if (currentSmartScanResult) currentSmartScanResult.scanModeKey = scanKey;
+                renderScanToolbarProgress(state);
+                renderSmartScanProgress(state);
+                if (openResults) {
+                    showScanResultsModal();
+                }
+                ensureSmartScanPolling(scanKey);
+                return true;
+            }
+
+            if (!onlyRunning && (state?.status === 'completed' || state?.status === 'cancelled' || state?.status === 'failed') && state?.result) {
+                activeScanModeKey = scanKey;
+                activeScanJobKey = null;
+                currentSmartScanResult = state.result;
+                currentSmartScanResult.scanModeKey = scanKey;
+                hideScanToolbarProgress();
+                if (openResults) {
+                    showScanResultsModal();
+                    renderSmartScanSummary(state);
+                }
+                return true;
+            }
+        } catch (error) {
+            console.debug(`Unable to restore ${scanKey} job state`, error);
+        }
+    }
+
+    return false;
+}
+
+async function openScanWorkflowModal() {
+    const resumed = await resumeActiveSmartScanJob({ openResults: true, onlyRunning: true });
+    if (resumed) return;
+
+    document.getElementById('scan-workflow-title').textContent = 'Scan Your Library';
+    document.getElementById('scan-workflow-copy').textContent = 'Choose the scan mode that fits the work you want XDir to do right now.';
+    setScanWorkflowView('scan-workflow-choice-view');
+    showScanWorkflowModal();
+}
+
+async function runOverviewMetadataFetch(button, idleHtml, loadingHtml, failureMessage) {
+    if (!currentGame || !button) return;
+
+    button.disabled = true;
+    button.innerHTML = loadingHtml;
+    if (window.lucide) lucide.createIcons();
+
+    try {
+        const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/fetch-metadata`, { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Server error');
+        }
+        const data = await res.json();
+
+        const wasIdentified = currentGame.is_identified;
+        currentGame = data.game;
+        renderOverview(currentGame);
+        await fetchTags();
+        await loadGames();
+
+        if (!currentGame.is_identified) {
+            openInteractiveSearch(currentGame.title || currentGame.raw_name, getPreferredSourcePlatform());
+        } else if (!wasIdentified && currentGame.is_identified) {
+            alert(`Successfully auto-identified as: ${currentGame.title}`);
+        }
+    } catch (err) {
+        alert(`${failureMessage}: ${err.message}`);
+    } finally {
+        button.disabled = false;
+        button.innerHTML = idleHtml;
+        if (window.lucide) lucide.createIcons();
+    }
 }
 
 
@@ -50,15 +1093,28 @@ function activateTab(tabId) {
 
     if (tabId === 'library') loadGames();
     if (tabId === 'extension' && typeof loadExtensionQueue === 'function') loadExtensionQueue();
+    if (tabId === 'settings') {
+        fetchStats();
+        refreshSettingsMetadataQueue({ force: true }).catch((error) => {
+            console.debug('Failed to refresh settings metadata queue', error);
+        });
+    }
 }
 
 async function initApp() {
+    setupWindowResizeHandles();
     setupEventListeners();
     const statsTask = fetchStats();
     const settingsTask = loadSettings();
     const tagsTask = fetchTags();
     const gamesTask = loadGames();
     await Promise.allSettled([statsTask, settingsTask]);
+    resumeActiveSettingsJob().catch((error) => {
+        console.error('Failed to resume active settings job', error);
+    });
+    resumeActiveSmartScanJob({ onlyRunning: true }).catch((error) => {
+        console.error('Failed to resume active smart scan job', error);
+    });
     
     // Dismiss Splash Screen
     const splash = document.getElementById('app-splash');
@@ -75,6 +1131,7 @@ async function initApp() {
     await Promise.allSettled([tagsTask, gamesTask]);
     await checkExtensionStatus();
     setInterval(checkExtensionStatus, 15000);
+    setInterval(fetchStats, 3000);
 }
 
 async function checkExtensionStatus() {
@@ -106,24 +1163,46 @@ async function checkExtensionStatus() {
             }
         }
 
+        renderSettingsExtensionStatus(status);
+
     } catch (e) {
         console.debug("Extension status check failed", e);
+        renderSettingsExtensionStatus({ connected: false });
     }
 }
 
-function setupEventListeners() {
-    // Title Bar Dragging & Snapping (Win32 HTCAPTION via pywebview)
-    const topNav = document.querySelector('.top-nav');
-    if (topNav) {
-        topNav.addEventListener('mousedown', (e) => {
-            if (e.button === 0 && !e.target.closest('button, nav, input, select, .quick-status, .window-controls')) {
-                if (window.pywebview && pywebview.api && pywebview.api.start_drag) {
-                    pywebview.api.start_drag();
-                }
-            }
+function setupWindowResizeHandles() {
+    const handles = document.querySelectorAll('.window-resize-hitbox[data-resize-edge]');
+    if (!handles.length) return;
+    const desktopResize = window.pywebview && window.pywebview.api && window.pywebview.api.start_resize;
+
+    if (!desktopResize) {
+        handles.forEach((handle) => {
+            handle.style.display = 'none';
         });
+        return;
     }
 
+    handles.forEach((handle) => {
+        handle.addEventListener('mousedown', async (event) => {
+            if (event.button !== 0) return;
+
+            const edge = handle.dataset.resizeEdge;
+            if (!edge) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            try {
+                await desktopResize(edge);
+            } catch (_) {
+                // Ignore desktop shell resize failures so the app remains usable.
+            }
+        });
+    });
+}
+
+function setupEventListeners() {
     // Navigation Tabs
     document.querySelectorAll('.nav-tab').forEach(tab => {
         tab.addEventListener('click', () => {
@@ -140,7 +1219,104 @@ function setupEventListeners() {
 
     // Quick Scan / Add Game button
     const btnAddGame = document.getElementById('btn-add-game');
-    if (btnAddGame) btnAddGame.addEventListener('click', (e) => triggerRescan(e.currentTarget));
+    if (btnAddGame) btnAddGame.addEventListener('click', () => openScanWorkflowModal());
+
+    const scanToolbarProgressBtn = document.getElementById('btn-open-smart-scan-progress');
+    if (scanToolbarProgressBtn) {
+        scanToolbarProgressBtn.addEventListener('click', () => {
+            resumeActiveSmartScanJob({ openResults: true, onlyRunning: true });
+        });
+    }
+
+    const scanToolbarCancelBtn = document.getElementById('btn-cancel-smart-scan-toolbar');
+    if (scanToolbarCancelBtn) {
+        scanToolbarCancelBtn.addEventListener('click', async () => {
+            if (!activeScanJobKey) return;
+            try {
+                await fetch(`${API_BASE}/api/library/jobs/${activeScanJobKey}/cancel`, { method: 'POST' });
+            } catch (error) {
+                alert(`Failed to cancel scan: ${error.message}`);
+            }
+        });
+    }
+
+    const closeScanWorkflowBtn = document.getElementById('btn-close-scan-workflow');
+    if (closeScanWorkflowBtn) {
+        closeScanWorkflowBtn.addEventListener('click', () => closeScanWorkflowModal());
+    }
+
+    const scanWorkflowBackdrop = document.getElementById('scan-workflow-backdrop');
+    if (scanWorkflowBackdrop) {
+        scanWorkflowBackdrop.addEventListener('click', () => closeScanWorkflowModal());
+    }
+
+    const closeScanResultsBtn = document.getElementById('btn-close-scan-results');
+    if (closeScanResultsBtn) {
+        closeScanResultsBtn.addEventListener('click', () => closeScanResultsModal());
+    }
+
+    const scanResultsBackdrop = document.getElementById('scan-results-backdrop');
+    if (scanResultsBackdrop) {
+        scanResultsBackdrop.addEventListener('click', () => closeScanResultsModal());
+    }
+
+    const normalScanBtn = document.getElementById('btn-scan-normal');
+    if (normalScanBtn) {
+        normalScanBtn.addEventListener('click', async () => {
+            closeScanWorkflowModal(true);
+            await triggerRescan(document.getElementById('btn-add-game'));
+        });
+    }
+
+    const smartScanBtn = document.getElementById('btn-scan-smart');
+    if (smartScanBtn) {
+        smartScanBtn.addEventListener('click', async () => {
+            await startSmartScan();
+        });
+    }
+
+    const missingSourceScanBtn = document.getElementById('btn-scan-missing-source');
+    if (missingSourceScanBtn) {
+        missingSourceScanBtn.addEventListener('click', async () => {
+            await startMissingSourceScan();
+        });
+    }
+
+    const smartScanCancelBtn = document.getElementById('btn-smart-scan-cancel');
+    if (smartScanCancelBtn) {
+        smartScanCancelBtn.addEventListener('click', async () => {
+            if (!activeScanJobKey) return;
+            try {
+                await fetch(`${API_BASE}/api/library/jobs/${activeScanJobKey}/cancel`, { method: 'POST' });
+            } catch (error) {
+                alert(`Failed to cancel scan: ${error.message}`);
+            }
+        });
+    }
+
+    const smartScanReviewBtn = document.getElementById('btn-smart-scan-review');
+    if (smartScanReviewBtn) {
+        smartScanReviewBtn.addEventListener('click', () => {
+            renderSmartScanReviewList();
+        });
+    }
+
+    const smartScanRunAgainBtn = document.getElementById('btn-smart-scan-run-again');
+    if (smartScanRunAgainBtn) {
+        smartScanRunAgainBtn.addEventListener('click', async () => {
+            await startSmartScan();
+        });
+    }
+
+    const smartScanCloseBtn = document.getElementById('btn-smart-scan-close');
+    if (smartScanCloseBtn) {
+        smartScanCloseBtn.addEventListener('click', () => closeScanResultsModal());
+    }
+
+    const smartScanReviewBackBtn = document.getElementById('btn-smart-scan-review-back');
+    if (smartScanReviewBackBtn) {
+        smartScanReviewBackBtn.addEventListener('click', () => renderSmartScanSummary());
+    }
     
     // Window Controls (Minimize, Maximize, Close)
     const btnWinMin = document.getElementById('btn-win-min');
@@ -162,35 +1338,8 @@ function setupEventListeners() {
     // Add to Wishlist
     const addWishBtn = document.getElementById('btn-add-wishlist');
     if (addWishBtn) {
-        addWishBtn.addEventListener('click', async () => {
-            const url = prompt("Enter game URL (F95Zone, DLsite, Itch.io, or Steam) to add to Wishlist:");
-            if (!url) return;
-            const originalText = addWishBtn.innerHTML;
-            try {
-                addWishBtn.innerHTML = `<i data-lucide="loader" class="spin"></i> <span>Adding...</span>`;
-                addWishBtn.disabled = true;
-                if (window.lucide) lucide.createIcons();
-                
-                const res = await fetch(`${API_BASE}/api/games/wishlist`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({url})
-                });
-                if (res.ok) {
-                    alert("Added to Wishlist instantly! Cover and metadata are downloading in the background.");
-                    loadGames();
-                    fetchStats();
-                } else {
-                    const data = await res.json();
-                    alert(data.detail || "Failed to add to wishlist.");
-                }
-            } catch(e) {
-                alert("Network error while adding to wishlist.");
-            } finally {
-                addWishBtn.innerHTML = originalText;
-                addWishBtn.disabled = false;
-                if (window.lucide) lucide.createIcons();
-            }
+        addWishBtn.addEventListener('click', () => {
+            if (typeof openWishlistModal === 'function') openWishlistModal();
         });
     }
 
@@ -225,6 +1374,27 @@ function setupEventListeners() {
 
     document.getElementById('btn-save-preferences')?.addEventListener('click', async () => {
         await persistSettings();
+    });
+
+    document.getElementById('set-preferred-source')?.addEventListener('change', (event) => {
+        renderSettingsPreferredSource(event.target.value);
+    });
+
+    document.getElementById('btn-settings-scan-directory')?.addEventListener('click', async () => {
+        await triggerRescan(document.getElementById('btn-settings-scan-directory'));
+    });
+
+    document.getElementById('btn-settings-smart-scan')?.addEventListener('click', async () => {
+        await startSmartScan();
+    });
+
+    document.getElementById('btn-settings-missing-source-scan')?.addEventListener('click', async () => {
+        await startMissingSourceScan();
+    });
+
+    document.getElementById('btn-settings-open-extension-tab')?.addEventListener('click', () => {
+        activateTab('extension');
+        if (typeof loadExtensionQueue === 'function') loadExtensionQueue();
     });
 
     // Filter Cards in Sidebar
@@ -289,6 +1459,20 @@ function setupEventListeners() {
         loadGames();
     });
 
+    // Tiles per row select
+    const tilesSelect = document.getElementById('tiles-per-row-select');
+    if (tilesSelect) {
+        const savedTiles = localStorage.getItem('xdir_tiles_per_row') || 'auto';
+        tilesSelect.value = savedTiles;
+        applyTilesPerRow(savedTiles);
+
+        tilesSelect.addEventListener('change', (e) => {
+            const val = e.target.value;
+            localStorage.setItem('xdir_tiles_per_row', val);
+            applyTilesPerRow(val);
+        });
+    }
+
     // Overview Back button
     document.getElementById('overview-back').addEventListener('click', async () => {
         document.getElementById('overview-modal').style.display = 'none';
@@ -302,10 +1486,6 @@ function setupEventListeners() {
     // Overview Launch button
     document.getElementById('ov-btn-launch').addEventListener('click', () => {
         if (currentGame) launchGame(currentGame.id);
-    });
-
-    document.getElementById('ov-btn-folder').addEventListener('click', () => {
-        if (currentGame) launchGame(currentGame.id, true);
     });
 
     const updateBadgeBtn = document.getElementById('ov-badge-update');
@@ -457,7 +1637,7 @@ function setupEventListeners() {
                 await loadGames();
                 
                 if (!currentGame.is_identified) {
-                    alert("Could not automatically find metadata for this game. If this is a DLsite game without an RJ code in its name, please use the Chrome Extension to sync it manually!");
+                    openInteractiveSearch(currentGame.title || currentGame.raw_name, getPreferredSourcePlatform());
                 } else if (!wasIdentified && currentGame.is_identified) {
                     alert(`Successfully auto-identified as: ${currentGame.title}`);
                 } else {
@@ -519,7 +1699,7 @@ function setupEventListeners() {
                 document.getElementById('ov-title-top').textContent = originalMetadata.title;
                 document.getElementById('ov-title').textContent = originalMetadata.title;
                 const descEl = document.getElementById('ov-description');
-                if (descEl) descEl.textContent = originalMetadata.description || "No description available yet. Click above or use the companion extension to auto-scrape from F95zone or DLsite!";
+                if (descEl) descEl.textContent = originalMetadata.description || "No description available yet. Use Fetch Info above or the companion extension to auto-scrape from F95zone or DLsite!";
                 
                 const tagsCloud = document.getElementById('ov-tag-cloud');
                 if (tagsCloud) tagsCloud.innerHTML = originalMetadata.tagsHtml;
@@ -612,63 +1792,11 @@ function setupEventListeners() {
         });
     }
 
-    // Per-game fetch description & metadata button inside Description section
-    const fetchDescBtn = document.getElementById('ov-btn-fetch-desc');
-    if (fetchDescBtn) {
-        fetchDescBtn.addEventListener('click', async () => {
-            if (!currentGame) return;
-            fetchDescBtn.innerHTML = `<i data-lucide="loader" class="spin"></i> <span>Scraping...</span>`;
-            fetchDescBtn.disabled = true;
-            if (window.lucide) lucide.createIcons();
-            try {
-                const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/fetch-metadata`, { method: 'POST' });
-                if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.detail || "Server error");
-                }
-                const data = await res.json();
-                
-                const wasIdentified = currentGame.is_identified;
-                currentGame = data.game;
-                renderOverview(currentGame);
-                await fetchTags();
-                await loadGames();
-                
-                if (!currentGame.is_identified) {
-                    alert("Could not automatically find metadata for this game. If this is a DLsite game without an RJ code in its name, please use the Chrome Extension to sync it manually!");
-                } else if (!wasIdentified && currentGame.is_identified) {
-                    alert(`Successfully auto-identified as: ${currentGame.title}`);
-                }
-            } catch (err) {
-                alert("Failed to retrieve description and metadata: " + err.message);
-            } finally {
-                fetchDescBtn.disabled = false;
-                fetchDescBtn.innerHTML = `<i data-lucide="zap" style="width:14px;height:14px;"></i> Retrieve Metadata & Description`;
-                if (window.lucide) lucide.createIcons();
-            }
-        });
-    }
-
     // Fix Titles & Refetch Metadata button in Settings -> Media
     const fixMetaBtn = document.getElementById('btn-fix-metadata');
     if (fixMetaBtn) {
         fixMetaBtn.addEventListener('click', async () => {
-            fixMetaBtn.innerHTML = `<i data-lucide="loader" class="spin"></i> <span>Fixing Titles & Refetching Metadata (Please wait)...</span>`;
-            fixMetaBtn.disabled = true;
-            if (window.lucide) lucide.createIcons();
-            try {
-                const res = await fetch(`${API_BASE}/api/library/fix-metadata`, { method: 'POST' });
-                const data = await res.json();
-                alert(data.message || "Metadata fix complete!");
-                await fetchStats();
-                await loadGames();
-            } catch (err) {
-                alert("Failed to fix titles and refetch metadata.");
-            } finally {
-                fixMetaBtn.disabled = false;
-                fixMetaBtn.innerHTML = `<i data-lucide="wand-2"></i> <span>Fix Titles & Refetch All Metadata (Covers, Screenshots & Titles)</span>`;
-                if (window.lucide) lucide.createIcons();
-            }
+            await startSettingsTrackedJob('fix-metadata');
         });
     }
 
@@ -676,22 +1804,15 @@ function setupEventListeners() {
     const rematchBtn = document.getElementById('btn-rematch-f95');
     if (rematchBtn) {
         rematchBtn.addEventListener('click', async () => {
-            rematchBtn.innerHTML = `<i data-lucide="loader" class="spin"></i> <span>Rematching and Scraping from F95Zone (Please wait)...</span>`;
-            rematchBtn.disabled = true;
-            if (window.lucide) lucide.createIcons();
-            try {
-                const res = await fetch(`${API_BASE}/api/library/rematch-f95zone`, { method: 'POST' });
-                const data = await res.json();
-                alert(data.message || "Rematching complete!");
-                await fetchStats();
-                await loadGames();
-            } catch (err) {
-                alert("Failed to rematch F95Zone titles.");
-            } finally {
-                rematchBtn.disabled = false;
-                rematchBtn.innerHTML = `<i data-lucide="search"></i> <span>Rematch Unidentified Games from F95Zone</span>`;
-                if (window.lucide) lucide.createIcons();
-            }
+            await startSettingsTrackedJob('rematch-f95zone');
+        });
+    }
+
+    const flushMetaBtn = document.getElementById('btn-flush-metadata');
+    if (flushMetaBtn) {
+        flushMetaBtn.addEventListener('click', async () => {
+            if (!confirmFlushAllMetadata()) return;
+            await startSettingsTrackedJob('flush-metadata');
         });
     }
 
@@ -722,78 +1843,517 @@ function setupEventListeners() {
         });
     }
 
-    // 1. "Wrong Data / Re-scrape": Clears source and re-scrapes from F95Zone
+    // Interactive Search & Picker Functions
+    function showSourceModalBackdrop(show) {
+        const bd = document.getElementById('ov-source-modal-backdrop');
+        if (bd) bd.style.display = show ? 'block' : 'none';
+    }
+
+    // Wishlist Modal Functions & Listeners
+    let currentWishlistPlatform = 'all';
+
+    function openWishlistModal(defaultQuery = "") {
+        const modal = document.getElementById('ov-wishlist-modal');
+        const urlInput = document.getElementById('wishlist-url-input');
+        const searchInput = document.getElementById('wishlist-search-input');
+        const resultsDiv = document.getElementById('wishlist-search-results');
+        const statusDiv = document.getElementById('wishlist-search-status');
+        if (!modal) return;
+
+        const formSearch = document.getElementById('ov-interactive-search-form');
+        const formLink = document.getElementById('ov-link-form');
+        const formLocal = document.getElementById('ov-local-link-form');
+        if (formSearch) formSearch.style.display = 'none';
+        if (formLink) formLink.style.display = 'none';
+        if (formLocal) formLocal.style.display = 'none';
+
+        modal.style.display = 'block';
+        showSourceModalBackdrop(true);
+        currentWishlistPlatform = getPreferredSourcePlatform();
+
+        const chipsDiv = document.getElementById('wishlist-search-platforms');
+        if (chipsDiv) {
+            chipsDiv.querySelectorAll('.platform-chip').forEach(chip => {
+                const isMatch = chip.dataset.platform === currentWishlistPlatform;
+                chip.classList.toggle('active', isMatch);
+                chip.style.borderColor = isMatch ? '#38bdf8' : 'rgba(255,255,255,0.1)';
+                chip.style.background = isMatch ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.05)';
+                chip.style.color = isMatch ? '#fff' : '#94a3b8';
+            });
+        }
+
+        if (urlInput) urlInput.value = '';
+        if (searchInput) searchInput.value = defaultQuery || '';
+        if (resultsDiv) resultsDiv.innerHTML = '';
+        if (statusDiv) {
+            statusDiv.style.display = 'none';
+            statusDiv.textContent = '';
+        }
+
+        if (defaultQuery && defaultQuery.trim().length >= 2) {
+            doWishlistSearch(defaultQuery.trim());
+        } else if (searchInput) {
+            searchInput.focus();
+        } else if (urlInput) {
+            urlInput.focus();
+        }
+    }
+
+    async function openWishlistBrowserSearch(query = "") {
+        const searchInput = document.getElementById('wishlist-search-input');
+        const resolvedQuery = (query || searchInput?.value || '').trim();
+        if (resolvedQuery.length < 2) {
+            if (searchInput) searchInput.focus();
+            alert("Enter at least 2 characters to search in your browser.");
+            return;
+        }
+
+        const browserUrl = buildSourceBrowserSearchUrl(resolvedQuery, currentWishlistPlatform);
+        if (browserUrl) {
+            await openExternalUrl(browserUrl);
+        }
+    }
+
+    async function doWishlistSearch(query) {
+        const resultsDiv = document.getElementById('wishlist-search-results');
+        const statusDiv = document.getElementById('wishlist-search-status');
+        if (!resultsDiv || !statusDiv) return;
+
+        statusDiv.style.display = 'block';
+        statusDiv.innerHTML = `<i data-lucide="loader" class="spin" style="width:14px;height:14px;display:inline-block;vertical-align:middle;"></i> Searching ${currentWishlistPlatform.toUpperCase()} for "${query}"...`;
+        if (window.lucide) lucide.createIcons();
+        resultsDiv.innerHTML = '';
+
+        try {
+            const res = await fetch(`${API_BASE}/api/search/universal?query=${encodeURIComponent(query)}&platform=${currentWishlistPlatform}`);
+            const data = await res.json();
+            
+            if (!data.results || data.results.length === 0) {
+                statusDiv.innerHTML = `No matching entries found on ${currentWishlistPlatform.toUpperCase()} for "${query}". Try different keywords or switch tabs!`;
+                return;
+            }
+
+            statusDiv.style.display = 'none';
+            resultsDiv.innerHTML = data.results.map(item => `
+                <div style="display:flex; align-items:center; justify-content:space-between; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px; border-radius: 10px; gap: 16px;">
+                    <div style="display:flex; align-items:center; gap: 14px; flex: 1; min-width: 0;">
+                        ${item.cover ? `<img src="${item.cover}" style="width: 48px; height: 60px; object-fit: cover; border-radius: 6px; flex-shrink: 0;" onerror="this.style.display='none'">` : `<div style="width:48px;height:60px;background:rgba(255,255,255,0.05);border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;"><i data-lucide="gamepad-2" style="width:24px;height:24px;color:#64748b;"></i></div>`}
+                        <div style="min-width: 0; flex: 1;">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                                <span class="pill-primary" style="font-size:0.7rem; padding:2px 8px;">${(item.source_type || 'unknown').toUpperCase()}</span>
+                                <span style="font-weight: 700; font-size: 0.95rem; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.title}">${item.title}</span>
+                            </div>
+                            <div style="font-size: 0.8rem; color: #94a3b8; display:flex; gap: 12px;">
+                                <span><i data-lucide="user" style="width:13px;height:13px;display:inline-block;vertical-align:middle;"></i> ${item.creator || 'Unknown'}</span>
+                                ${item.version ? `<span><i data-lucide="tag" style="width:13px;height:13px;display:inline-block;vertical-align:middle;"></i> ${item.version}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-shrink: 0;">
+                        <button class="btn-primary btn-wishlist-select-item" data-url="${item.url}" data-title="${encodeURIComponent(item.title || '')}" data-creator="${encodeURIComponent(item.creator || '')}" data-cover="${encodeURIComponent(item.cover || '')}" data-version="${encodeURIComponent(item.version || '')}" title="Add to Wishlist" style="padding: 8px 16px; font-size: 0.85rem; font-weight: 700; display: flex; align-items: center; gap: 6px; border-radius: 6px; cursor: pointer;">
+                            <i data-lucide="plus-circle" style="width:16px;height:16px;fill:#fff;"></i>
+                            <span>Add to Wishlist</span>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            if (window.lucide) lucide.createIcons();
+
+            resultsDiv.querySelectorAll('.btn-wishlist-select-item').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const url = btn.dataset.url;
+                    if (!url) return;
+                    await submitWishlistItem(
+                        url,
+                        decodeURIComponent(btn.dataset.title || ''),
+                        decodeURIComponent(btn.dataset.cover || ''),
+                        decodeURIComponent(btn.dataset.creator || ''),
+                        decodeURIComponent(btn.dataset.version || ''),
+                        btn
+                    );
+                });
+            });
+
+            const fallbackWishlistSearchHtml = `
+                <div style="text-align:center; margin-top: 10px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,0.1);">
+                    <button type="button" class="btn-secondary btn-wishlist-fallback-search" style="font-size:0.75rem; padding: 6px 12px; display:inline-flex; align-items:center; gap:6px;">
+                        <i data-lucide="external-link" style="width:13px;height:13px;"></i> Search ${currentWishlistPlatform.toUpperCase()} in Browser
+                    </button>
+                </div>
+            `;
+            resultsDiv.insertAdjacentHTML('beforeend', fallbackWishlistSearchHtml);
+            if (window.lucide) lucide.createIcons();
+            const extBtn = resultsDiv.querySelector('.btn-wishlist-fallback-search');
+            if (extBtn) {
+                extBtn.addEventListener('click', async () => {
+                    await openWishlistBrowserSearch(query);
+                });
+            }
+        } catch (err) {
+            statusDiv.innerHTML = `Error searching sources: ${err.message}`;
+        }
+    }
+
+    async function submitWishlistItem(url, title = null, cover = null, creator = null, version = null, btnEl = null) {
+        if (!url) { alert("Please enter or select a valid URL."); return; }
+        
+        let originalHtml = "";
+        if (btnEl) {
+            originalHtml = btnEl.innerHTML;
+            btnEl.disabled = true;
+            btnEl.innerHTML = `<i data-lucide="loader" class="spin" style="width:14px;height:14px;"></i> <span>Adding...</span>`;
+            if (window.lucide) lucide.createIcons();
+        }
+
+        try {
+            const payload = {
+                url: url,
+                title: title || null,
+                cover_url: cover || null,
+                developer: creator || null,
+                version: version || null
+            };
+            const res = await fetch(`${API_BASE}/api/games/wishlist`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                alert("Added to Wishlist instantly! Cover and metadata are downloading in the background.");
+                const formWishlist = document.getElementById('ov-wishlist-modal');
+                if (formWishlist) formWishlist.style.display = 'none';
+                showSourceModalBackdrop(false);
+                if (typeof loadGames === 'function') loadGames();
+                if (typeof fetchStats === 'function') fetchStats();
+            } else {
+                const data = await res.json();
+                alert(data.detail || "Failed to add to wishlist.");
+                if (btnEl) {
+                    btnEl.disabled = false;
+                    btnEl.innerHTML = originalHtml;
+                    if (window.lucide) lucide.createIcons();
+                }
+            }
+        } catch (e) {
+            alert("Network error while adding to wishlist.");
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerHTML = originalHtml;
+                if (window.lucide) lucide.createIcons();
+            }
+        }
+    }
+
+    const closeWishlistBtn = document.getElementById('wishlist-btn-close');
+    if (closeWishlistBtn) {
+        closeWishlistBtn.addEventListener('click', () => {
+            const form = document.getElementById('ov-wishlist-modal');
+            if (form) form.style.display = 'none';
+            showSourceModalBackdrop(false);
+        });
+    }
+
+    const addWishlistUrlBtn = document.getElementById('wishlist-btn-add-url');
+    const wishlistUrlInput = document.getElementById('wishlist-url-input');
+    if (addWishlistUrlBtn && wishlistUrlInput) {
+        addWishlistUrlBtn.addEventListener('click', () => {
+            const url = wishlistUrlInput.value.trim();
+            if (url) submitWishlistItem(url, null, null, null, null, addWishlistUrlBtn);
+        });
+        wishlistUrlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const url = wishlistUrlInput.value.trim();
+                if (url) submitWishlistItem(url, null, null, null, null, addWishlistUrlBtn);
+            }
+        });
+    }
+
+    const doWishlistSearchBtn = document.getElementById('wishlist-btn-do-search');
+    const wishlistSearchInput = document.getElementById('wishlist-search-input');
+    if (doWishlistSearchBtn && wishlistSearchInput) {
+        doWishlistSearchBtn.addEventListener('click', () => {
+            if (wishlistSearchInput.value.trim().length >= 2) {
+                doWishlistSearch(wishlistSearchInput.value.trim());
+            }
+        });
+        wishlistSearchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && wishlistSearchInput.value.trim().length >= 2) {
+                doWishlistSearch(wishlistSearchInput.value.trim());
+            }
+        });
+    }
+
+    const wishlistBrowserSearchBtn = document.getElementById('wishlist-btn-browser-search');
+    if (wishlistBrowserSearchBtn) {
+        wishlistBrowserSearchBtn.addEventListener('click', async () => {
+            await openWishlistBrowserSearch();
+        });
+    }
+
+    const wishlistPlatformsDiv = document.getElementById('wishlist-search-platforms');
+    if (wishlistPlatformsDiv) {
+        wishlistPlatformsDiv.querySelectorAll('.platform-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                currentWishlistPlatform = chip.dataset.platform || 'all';
+                wishlistPlatformsDiv.querySelectorAll('.platform-chip').forEach(c => {
+                    const isMatch = c.dataset.platform === currentWishlistPlatform;
+                    c.classList.toggle('active', isMatch);
+                    c.style.borderColor = isMatch ? '#38bdf8' : 'rgba(255,255,255,0.1)';
+                    c.style.background = isMatch ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.05)';
+                    c.style.color = isMatch ? '#fff' : '#94a3b8';
+                });
+                const wishlistSearchInput = document.getElementById('wishlist-search-input');
+                if (wishlistSearchInput && wishlistSearchInput.value.trim().length >= 2) {
+                    doWishlistSearch(wishlistSearchInput.value.trim());
+                }
+            });
+        });
+    }
+
+    let currentSearchPlatform = 'all';
+
+    function openInteractiveSearch(queryText, defaultPlatform = '') {
+        const form = document.getElementById('ov-interactive-search-form');
+        const input = document.getElementById('ov-interactive-search-input');
+        const resultsDiv = document.getElementById('ov-interactive-search-results');
+        const statusDiv = document.getElementById('ov-interactive-search-status');
+        if (!form || !input || !resultsDiv) return;
+
+        const linkFormEl = document.getElementById('ov-link-form');
+        const localFormEl = document.getElementById('ov-local-link-form');
+        const wishlistModalEl = document.getElementById('ov-wishlist-modal');
+        if (linkFormEl) linkFormEl.style.display = 'none';
+        if (localFormEl) localFormEl.style.display = 'none';
+        if (wishlistModalEl) wishlistModalEl.style.display = 'none';
+
+        form.style.display = 'block';
+        showSourceModalBackdrop(true);
+        currentSearchPlatform = defaultPlatform || getPreferredSourcePlatform();
+
+        const chipsDiv = document.getElementById('ov-interactive-search-platforms');
+        if (chipsDiv) {
+            chipsDiv.querySelectorAll('.platform-chip').forEach(chip => {
+                const isMatch = chip.dataset.platform === currentSearchPlatform;
+                chip.classList.toggle('active', isMatch);
+                chip.style.borderColor = isMatch ? '#38bdf8' : 'rgba(255,255,255,0.1)';
+                chip.style.background = isMatch ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.05)';
+                chip.style.color = isMatch ? '#fff' : '#94a3b8';
+            });
+        }
+        
+        let clean = (queryText || "").replace(/(\bv\d+.*|\b\d+b\b|rev\d+|fixed|ver\b.*|\b\d+\b|windows|edition|complete|deluxe|game|part|chapter|english|translated|archive|rar|zip|7z|\bv\d+\b).*/gi, '').replace(/[_\-\.\[\]\(\)\{\}]/g, ' ').trim();
+        input.value = clean || queryText || "";
+        input.focus();
+        
+        if (input.value.trim().length >= 2) {
+            doInteractiveSearch(input.value.trim());
+        }
+    }
+
+    async function doInteractiveSearch(query) {
+        const resultsDiv = document.getElementById('ov-interactive-search-results');
+        const statusDiv = document.getElementById('ov-interactive-search-status');
+        if (!resultsDiv || !statusDiv) return;
+
+        statusDiv.style.display = 'block';
+        statusDiv.innerHTML = `<i data-lucide="loader" class="spin" style="width:14px;height:14px;display:inline-block;vertical-align:middle;"></i> Searching ${currentSearchPlatform.toUpperCase()} for "${query}"...`;
+        if (window.lucide) lucide.createIcons();
+        resultsDiv.innerHTML = '';
+
+        try {
+            const res = await fetch(`${API_BASE}/api/search/universal?query=${encodeURIComponent(query)}&platform=${currentSearchPlatform}`);
+            const data = await res.json();
+            
+            if (!data.results || data.results.length === 0) {
+                statusDiv.innerHTML = `No matching entries found on ${currentSearchPlatform.toUpperCase()} for "${query}". Try different keywords or switch tabs!`;
+                return;
+            }
+
+            statusDiv.style.display = 'none';
+            resultsDiv.innerHTML = data.results.map(item => `
+                <div style="display:flex; align-items:center; justify-content:space-between; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px; border-radius: 10px; gap: 16px;">
+                    <div style="display:flex; align-items:center; gap: 14px; flex: 1; min-width: 0;">
+                        ${item.cover ? `<img src="${item.cover}" style="width: 48px; height: 60px; object-fit: cover; border-radius: 6px; flex-shrink: 0;" onerror="this.style.display='none'">` : `<div style="width:48px;height:60px;background:rgba(255,255,255,0.05);border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;"><i data-lucide="gamepad-2" style="width:24px;height:24px;color:#64748b;"></i></div>`}
+                        <div style="min-width: 0; flex: 1;">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                                <span class="pill-primary" style="font-size:0.7rem; padding:2px 8px;">${(item.source_type || 'unknown').toUpperCase()}</span>
+                                <span style="font-weight: 700; font-size: 0.95rem; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.title}">${item.title}</span>
+                            </div>
+                            <div style="font-size: 0.8rem; color: #94a3b8; display:flex; gap: 12px;">
+                                <span><i data-lucide="user" style="width:13px;height:13px;display:inline-block;vertical-align:middle;"></i> ${item.creator || 'Unknown'}</span>
+                                ${item.version ? `<span><i data-lucide="tag" style="width:13px;height:13px;display:inline-block;vertical-align:middle;"></i> ${item.version}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-shrink: 0;">
+                        <button type="button" class="btn-primary btn-src-select-link" data-url="${item.url}" data-title="${encodeURIComponent(item.title || '')}" data-creator="${encodeURIComponent(item.creator || '')}" data-cover="${encodeURIComponent(item.cover || '')}" data-version="${encodeURIComponent(item.version || '')}" title="Link selected source" style="padding: 8px 16px; font-size: 0.85rem; font-weight: 700; display: flex; align-items: center; gap: 6px; border-radius: 6px; cursor: pointer;">
+                            <i data-lucide="link-2" style="width:14px;height:14px;"></i>
+                            <span>Link</span>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            if (window.lucide) lucide.createIcons();
+
+            resultsDiv.querySelectorAll('.btn-src-select-link').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const url = btn.dataset.url;
+                    if (!url || !currentGame) return;
+
+                    const originalHtml = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.innerHTML = `<i data-lucide="loader" class="spin" style="width:14px;height:14px;"></i>`;
+                    if (window.lucide) lucide.createIcons();
+
+                    try {
+                        const payload = {
+                            source_url: url,
+                            make_preferred: false,
+                            title: decodeURIComponent(btn.dataset.title || ''),
+                            developer: decodeURIComponent(btn.dataset.creator || ''),
+                            cover_url: decodeURIComponent(btn.dataset.cover || ''),
+                            version: decodeURIComponent(btn.dataset.version || '')
+                        };
+                        const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/sources`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.detail || "Failed to link source");
+                        currentGame = data.game;
+
+                        document.getElementById('ov-interactive-search-form').style.display = 'none';
+                        const backdrop = document.getElementById('ov-source-modal-backdrop');
+                        if (backdrop) backdrop.style.display = 'none';
+                        renderOverview(currentGame);
+                        await loadGames();
+                        if (data.warning) alert(data.warning);
+                    } catch (err) {
+                        alert(err.message || "Failed to link selected source.");
+                        btn.disabled = false;
+                        btn.innerHTML = originalHtml;
+                        if (window.lucide) lucide.createIcons();
+                    }
+                });
+            });
+
+            const fallbackSearchHtml = `
+                <div style="text-align:center; margin-top: 10px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,0.1);">
+                    <button type="button" class="btn-secondary btn-ext-fallback-search" style="font-size:0.75rem; padding: 6px 12px; display:inline-flex; align-items:center; gap:6px;">
+                        <i data-lucide="external-link" style="width:13px;height:13px;"></i> Search ${currentSearchPlatform.toUpperCase()} in Browser
+                    </button>
+                </div>
+            `;
+            resultsDiv.insertAdjacentHTML('beforeend', fallbackSearchHtml);
+            if (window.lucide) lucide.createIcons();
+            const extBtn = resultsDiv.querySelector('.btn-ext-fallback-search');
+            if (extBtn) {
+                extBtn.addEventListener('click', async () => {
+                    const browserUrl = buildSourceBrowserSearchUrl(query, currentSearchPlatform);
+                    if (browserUrl) await openExternalUrl(browserUrl);
+                });
+            }
+        } catch (err) {
+            statusDiv.innerHTML = `Error searching sources: ${err.message}`;
+        }
+    }
+
+    const sourceModalBackdrop = document.getElementById('ov-source-modal-backdrop');
+    if (sourceModalBackdrop) {
+        sourceModalBackdrop.addEventListener('click', () => {
+            const formSearch = document.getElementById('ov-interactive-search-form');
+            const formLink = document.getElementById('ov-link-form');
+            const formLocal = document.getElementById('ov-local-link-form');
+            const formWishlist = document.getElementById('ov-wishlist-modal');
+            if (formSearch) formSearch.style.display = 'none';
+            if (formLink) formLink.style.display = 'none';
+            if (formLocal) formLocal.style.display = 'none';
+            if (formWishlist) formWishlist.style.display = 'none';
+            showSourceModalBackdrop(false);
+        });
+    }
+
+    const closeInteractiveSearchBtn = document.getElementById('ov-btn-close-interactive-search');
+    if (closeInteractiveSearchBtn) {
+        closeInteractiveSearchBtn.addEventListener('click', () => {
+            const form = document.getElementById('ov-interactive-search-form');
+            if (form) form.style.display = 'none';
+            showSourceModalBackdrop(false);
+        });
+    }
+
+    const doInteractiveSearchBtn = document.getElementById('ov-btn-do-interactive-search');
+    const interactiveSearchInput = document.getElementById('ov-interactive-search-input');
+    if (doInteractiveSearchBtn && interactiveSearchInput) {
+        doInteractiveSearchBtn.addEventListener('click', () => {
+            if (interactiveSearchInput.value.trim().length >= 2) {
+                doInteractiveSearch(interactiveSearchInput.value.trim());
+            }
+        });
+        interactiveSearchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && interactiveSearchInput.value.trim().length >= 2) {
+                doInteractiveSearch(interactiveSearchInput.value.trim());
+            }
+        });
+    }
+
+    const platformsDiv = document.getElementById('ov-interactive-search-platforms');
+    if (platformsDiv) {
+        platformsDiv.querySelectorAll('.platform-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                currentSearchPlatform = chip.dataset.platform || 'all';
+                platformsDiv.querySelectorAll('.platform-chip').forEach(c => {
+                    const isMatch = c.dataset.platform === currentSearchPlatform;
+                    c.classList.toggle('active', isMatch);
+                    c.style.borderColor = isMatch ? '#38bdf8' : 'rgba(255,255,255,0.1)';
+                    c.style.background = isMatch ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.05)';
+                    c.style.color = isMatch ? '#fff' : '#94a3b8';
+                });
+                const interactiveSearchInput = document.getElementById('ov-interactive-search-input');
+                if (interactiveSearchInput && interactiveSearchInput.value.trim().length >= 2) {
+                    doInteractiveSearch(interactiveSearchInput.value.trim());
+                }
+            });
+        });
+    }
+
+    // 1. "Wrong Data / Re-scrape": Clears source and opens interactive search list picker
     const markWrongBtn = document.getElementById('ov-btn-mark-wrong');
     if (markWrongBtn) {
         markWrongBtn.addEventListener('click', async () => {
             if (!currentGame) return;
-            if (!confirm(`Clear all scraped data for "${currentGame.title}" and re-scrape from F95Zone?`)) return;
+            if (!confirm(`Clear scraped metadata for "${currentGame.title || currentGame.raw_name}" and search for the correct game?`)) return;
             
             markWrongBtn.disabled = true;
-            markWrongBtn.innerHTML = `<i data-lucide="loader" class="spin"></i> <span>Clearing & re-scraping...</span>`;
+            markWrongBtn.innerHTML = `<i data-lucide="loader" class="spin"></i> <span>Clearing...</span>`;
             if (window.lucide) lucide.createIcons();
             
             try {
-                // Step 1: Clear existing source data
-                await fetch(`${API_BASE}/api/games/${currentGame.id}/clear-source`, { method: 'POST' });
-                
-                // Step 2: Re-scrape from F95Zone
-                const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/fetch-metadata`, { method: 'POST' });
+                const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/clear-source`, { method: 'POST' });
                 const data = await res.json();
                 currentGame = data.game;
                 renderOverview(currentGame);
                 await loadGames();
+                openInteractiveSearch(currentGame.title || currentGame.raw_name, getPreferredSourcePlatform());
             } catch (err) {
-                alert("Failed to re-scrape. You can try linking a source URL manually.");
+                alert("Failed to clear source data.");
             } finally {
                 markWrongBtn.disabled = false;
-                markWrongBtn.innerHTML = `<i data-lucide="alert-triangle"></i> <span>Wrong Data / Re-scrape</span>`;
+                markWrongBtn.innerHTML = `<i data-lucide="alert-triangle"></i> <span>Clear Data</span>`;
                 if (window.lucide) lucide.createIcons();
             }
         });
     }
 
-    // 2. "Fetch from F95Zone": Force-fetch metadata via the F95Zone rematch engine
-    const fetchF95Btn = document.getElementById('ov-btn-fetch-f95');
-    if (fetchF95Btn) {
-        fetchF95Btn.addEventListener('click', async () => {
+    // 2. Shared Search Button: Opens the interactive search modal across all supported sources
+    const searchSourceBtn = document.getElementById('ov-btn-search-source');
+    if (searchSourceBtn) {
+        searchSourceBtn.addEventListener('click', () => {
             if (!currentGame) return;
-            
-            fetchF95Btn.disabled = true;
-            fetchF95Btn.innerHTML = `<i data-lucide="loader" class="spin"></i> <span>Searching F95Zone...</span>`;
-            if (window.lucide) lucide.createIcons();
-            
-            try {
-                const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/fetch-metadata`, { method: 'POST' });
-                const data = await res.json();
-                currentGame = data.game;
-                renderOverview(currentGame);
-                await loadGames();
-            } catch (err) {
-                alert("Failed to fetch from F95Zone. The game title may not be found - try linking a URL manually.");
-            } finally {
-                fetchF95Btn.disabled = false;
-                fetchF95Btn.innerHTML = `<i data-lucide="search"></i><span style="font-size:0.8rem; font-weight:700;">F95Zone</span>`;
-                if (window.lucide) lucide.createIcons();
-            }
-        });
-    }
-
-    const searchDlsiteBtn = document.getElementById('ov-btn-search-dlsite');
-    if (searchDlsiteBtn) {
-        searchDlsiteBtn.addEventListener('click', () => {
-            if (!currentGame) return;
-            const q = encodeURIComponent(currentGame.title || currentGame.raw_name);
-            window.open(`https://www.google.com/search?q=site:dlsite.com+${q}`, '_blank');
-        });
-    }
-
-    const searchItchBtn = document.getElementById('ov-btn-search-itch');
-    if (searchItchBtn) {
-        searchItchBtn.addEventListener('click', () => {
-            if (!currentGame) return;
-            const q = encodeURIComponent(currentGame.title || currentGame.raw_name);
-            window.open(`https://www.google.com/search?q=site:itch.io+${q}`, '_blank');
+            openInteractiveSearch(currentGame.title || currentGame.raw_name, 'all');
         });
     }
 
@@ -804,6 +2364,7 @@ function setupEventListeners() {
     const submitLinkBtn = document.getElementById('ov-btn-submit-link');
     const linkInput = document.getElementById('ov-link-url-input');
     const localLinkBtn = document.getElementById('ov-btn-link-local');
+    const pickFolderArchiveBtn = document.getElementById('ov-btn-link-folder-archive');
     const localLinkForm = document.getElementById('ov-local-link-form');
     const localLinkSearch = document.getElementById('ov-local-link-search');
     const localLinkSelect = document.getElementById('ov-local-link-select');
@@ -811,11 +2372,21 @@ function setupEventListeners() {
     const submitLocalLinkBtn = document.getElementById('ov-btn-submit-local-link');
     let localLinkSearchTimer = null;
 
+    const closeLinkFormBtn = document.getElementById('ov-btn-close-link-form');
+    if (closeLinkFormBtn && linkForm) {
+        closeLinkFormBtn.addEventListener('click', () => {
+            linkForm.style.display = 'none';
+            showSourceModalBackdrop(false);
+        });
+    }
+
     if (linkSourceBtn && linkForm) {
         linkSourceBtn.addEventListener('click', () => {
             if (localLinkForm) localLinkForm.style.display = 'none';
-            linkForm.style.display = linkForm.style.display === 'none' ? 'block' : 'none';
-            if (linkForm.style.display === 'block') {
+            const shouldShow = linkForm.style.display === 'none';
+            linkForm.style.display = shouldShow ? 'block' : 'none';
+            showSourceModalBackdrop(shouldShow);
+            if (shouldShow) {
                 linkInput.value = '';
                 linkInput.focus();
             }
@@ -826,6 +2397,7 @@ function setupEventListeners() {
         cancelLinkBtn.addEventListener('click', () => {
             linkForm.style.display = 'none';
             linkInput.value = '';
+            showSourceModalBackdrop(false);
         });
     }
 
@@ -858,6 +2430,8 @@ function setupEventListeners() {
                 await loadGames();
                 linkForm.style.display = 'none';
                 linkInput.value = '';
+                showSourceModalBackdrop(false);
+                if (data.warning) alert(data.warning);
             } catch (err) {
                 alert("Failed to link source. Check the URL and try again.");
             } finally {
@@ -865,6 +2439,13 @@ function setupEventListeners() {
                 submitLinkBtn.innerHTML = `<i data-lucide="check"></i> <span>Link & Fetch</span>`;
                 if (window.lucide) lucide.createIcons();
             }
+        });
+    }
+
+    if (pickFolderArchiveBtn) {
+        pickFolderArchiveBtn.addEventListener('click', async () => {
+            if (!currentGame || currentGame.file_type !== 'wishlist') return;
+            await window.pickWishlistLocalPath(currentGame.id, currentGame.title);
         });
     }
 
@@ -896,11 +2477,20 @@ function setupEventListeners() {
         }
     }
 
+    const closeLocalLinkFormBtn = document.getElementById('ov-btn-close-local-link-form');
+    if (closeLocalLinkFormBtn && localLinkForm) {
+        closeLocalLinkFormBtn.addEventListener('click', () => {
+            localLinkForm.style.display = 'none';
+            showSourceModalBackdrop(false);
+        });
+    }
+
     if (localLinkBtn && localLinkForm) {
         localLinkBtn.addEventListener('click', async () => {
             if (linkForm) linkForm.style.display = 'none';
             const shouldShow = localLinkForm.style.display === 'none';
             localLinkForm.style.display = shouldShow ? 'block' : 'none';
+            showSourceModalBackdrop(shouldShow);
             if (!shouldShow) return;
             if (localLinkSearch) localLinkSearch.value = currentGame?.title || '';
             await loadWishlistLocalCandidates(localLinkSearch?.value || currentGame?.title || '');
@@ -922,6 +2512,7 @@ function setupEventListeners() {
             localLinkForm.style.display = 'none';
             if (localLinkSearch) localLinkSearch.value = '';
             if (localLinkSelect) localLinkSelect.innerHTML = '';
+            showSourceModalBackdrop(false);
         });
     }
 
@@ -955,6 +2546,7 @@ function setupEventListeners() {
                 if (localLinkForm) localLinkForm.style.display = 'none';
                 if (localLinkSearch) localLinkSearch.value = '';
                 if (localLinkSelect) localLinkSelect.innerHTML = '';
+                showSourceModalBackdrop(false);
             } catch (err) {
                 alert(`Failed to link wishlist item: ${err.message}`);
             } finally {
@@ -985,12 +2577,19 @@ async function triggerRescan(triggerButton = null) {
     if (window.lucide) lucide.createIcons();
     
     try {
-        await fetch(`${API_BASE}/api/library/scan`, { method: 'POST' });
+        const res = await fetch(`${API_BASE}/api/library/scan`, { method: 'POST' });
+        const data = await readJsonResponse(res);
+        if (!res.ok) {
+            throw new Error(data.detail || 'Scan failed');
+        }
         await fetchStats();
         await fetchTags();
         await loadGames();
+        return true;
     } catch (err) {
         console.error("Scan failed", err);
+        alert(`Failed to scan directory: ${err.message}`);
+        return false;
     } finally {
         if (btn) {
             btn.innerHTML = originalHtml;
@@ -1006,8 +2605,7 @@ function collectSettingsPayload() {
         archive_mode: document.getElementById('set-launch-archive-mode')?.value || 'explorer',
         startup_scan: !!document.getElementById('toggle-startup-scan')?.checked,
         missing_grace_scans: parseInt(document.getElementById('setting-missing-grace-scans')?.value || '3', 10) || 3,
-        auto_update: !!document.getElementById('toggle-auto-update')?.checked,
-        preferred_source: document.getElementById('set-media-scraper')?.value || 'f95zone',
+        preferred_source: document.getElementById('set-preferred-source')?.value || appSettings?.preferred_source || 'f95zone',
     };
 }
 
@@ -1030,14 +2628,16 @@ async function loadSettings() {
         const missingGrace = document.getElementById('setting-missing-grace-scans');
         if (missingGrace) missingGrace.value = String(settings.missing_grace_scans || 3);
 
-        const autoUpdate = document.getElementById('toggle-auto-update');
-        if (autoUpdate) autoUpdate.checked = settings.auto_update !== false;
-
-        const preferredSource = document.getElementById('set-media-scraper');
+        const preferredSource = document.getElementById('set-preferred-source');
         if (preferredSource) preferredSource.value = settings.preferred_source || 'f95zone';
 
-        const sourceBadge = document.getElementById('set-stat-source');
-        if (sourceBadge) sourceBadge.textContent = (settings.preferred_source || 'f95zone').toUpperCase();
+        const extensionPath = document.getElementById('settings-extension-path');
+        if (extensionPath) extensionPath.textContent = settings.extension_dir || 'Waiting for extension path...';
+
+        renderSettingsPreferredSource(settings.preferred_source || 'f95zone');
+        refreshSettingsMetadataQueue({ force: true }).catch((error) => {
+            console.debug('Failed to refresh settings metadata queue', error);
+        });
     } catch (error) {
         console.error('Failed to load settings', error);
     }
@@ -1069,7 +2669,7 @@ async function persistSettings() {
             throw new Error(data.detail || 'Unknown error');
         }
         appSettings = data.settings;
-        await Promise.all([fetchStats(), fetchTags(), loadGames(), loadSettings()]);
+        await Promise.all([fetchStats(), fetchTags(), loadGames(), loadSettings(), refreshSettingsMetadataQueue({ force: true })]);
     } catch (error) {
         alert(`Error saving settings: ${error.message}`);
     } finally {
@@ -1081,20 +2681,24 @@ async function persistSettings() {
     }
 }
 
+let lastKnownStatsTotal = null;
+let lastKnownStatsWishlist = null;
+let isFetchingGames = false;
+
 async function fetchStats() {
     try {
         const res = await fetch(`${API_BASE}/api/stats`);
         const stats = await res.json();
         
+        const totalChanged = lastKnownStatsTotal !== null && lastKnownStatsTotal !== stats.total;
+        const wishlistChanged = lastKnownStatsWishlist !== null && lastKnownStatsWishlist !== stats.wishlist;
+        lastKnownStatsTotal = stats.total;
+        lastKnownStatsWishlist = stats.wishlist;
+        
         document.getElementById('stat-total-games').textContent = stats.total;
         document.getElementById('stat-wishlist-games').textContent = stats.wishlist;
-        
-        const setStatUp = document.getElementById('set-stat-updates');
-        if (setStatUp) setStatUp.textContent = stats.wishlist;
-        const setStatQ = document.getElementById('set-stat-queue');
-        if (setStatQ) setStatQ.textContent = `${stats.unidentified} games`;
-        const sourceBadge = document.getElementById('set-stat-source');
-        if (sourceBadge && appSettings?.preferred_source) sourceBadge.textContent = appSettings.preferred_source.toUpperCase();
+
+        renderSettingsSummary(stats);
         
         if (stats.games_dir) {
             const dirInput = document.getElementById('setting-games-dir');
@@ -1105,6 +2709,15 @@ async function fetchStats() {
             if (extBox) extBox.textContent = stats.extension_dir;
             const onbBox = document.getElementById('onboarding-ext-path');
             if (onbBox) onbBox.textContent = stats.extension_dir;
+            const settingsPath = document.getElementById('settings-extension-path');
+            if (settingsPath) settingsPath.textContent = stats.extension_dir;
+        }
+
+        const settingsView = document.getElementById('view-settings');
+        if (settingsView && settingsView.classList.contains('active')) {
+            refreshSettingsMetadataQueue().catch((error) => {
+                console.debug('Failed to refresh settings metadata queue', error);
+            });
         }
         
         const onboardingDone = localStorage.getItem('xdir_onboarding_completed');
@@ -1113,6 +2726,9 @@ async function fetchStats() {
             if (onbModal) onbModal.style.display = 'flex';
         }
         
+        if ((totalChanged || wishlistChanged) && !isFetchingGames && typeof loadGames === 'function') {
+            loadGames();
+        }
     } catch (e) {
         console.debug("Failed to fetch stats", e);
     }
@@ -1133,6 +2749,21 @@ async function fetchTags() {
     }
 }
 
+function applyTilesPerRow(val) {
+    const gridEl = document.getElementById('games-grid');
+    if (!gridEl) return;
+    if (val === 'auto' || !val) {
+        gridEl.style.gridTemplateColumns = '';
+    } else {
+        const cols = parseInt(val, 10);
+        if (cols >= 3 && cols <= 7) {
+            gridEl.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+        } else {
+            gridEl.style.gridTemplateColumns = '';
+        }
+    }
+}
+
 function resetFilters() {
     filterState = { preset: 'all', progress: 'all', updates: 'all', tag: 'all', source: 'all', search: '', sort: 'title' };
     document.getElementById('filter-preset').value = 'all';
@@ -1146,10 +2777,13 @@ function resetFilters() {
 }
 
 async function loadGames() {
+    isFetchingGames = true;
+    fetchStats();
     const grid = document.getElementById('games-grid');
     const empty = document.getElementById('empty-state');
     grid.innerHTML = '';
     empty.style.display = 'none';
+    applyTilesPerRow(localStorage.getItem('xdir_tiles_per_row') || 'auto');
 
     let url = `${API_BASE}/api/games?sort=${encodeURIComponent(filterState.sort)}&`;
     if (filterState.preset !== 'all') {
@@ -1202,6 +2836,8 @@ async function loadGames() {
         if (window.lucide) lucide.createIcons();
     } catch (err) {
         console.error("Failed to fetch games", err);
+    } finally {
+        isFetchingGames = false;
     }
 }
 
@@ -1211,6 +2847,7 @@ function createGameCard(game) {
     
     const isExe = game.file_type === 'exe' || game.file_type === 'folder';
     const isWishlist = game.file_type === 'wishlist';
+    const escapedTitle = (game.title || '').replace(/'/g, "\\'");
     
     let pillClass = isExe ? 'pill-exe' : 'pill-archive';
     let pillText = isExe ? 'INSTALLED' : 'ARCHIVE';
@@ -1224,9 +2861,20 @@ function createGameCard(game) {
     const topPillHtml = `<span class="card-top-pill ${pillClass}" ${isWishlist ? 'style="background:rgba(96,165,250,0.15); color:#93c5fd; border-color:rgba(96,165,250,0.3);"' : ''}>${pillText}</span>`;
 
     const deleteWishlistHtml = isWishlist 
-        ? `<button class="btn-card-delete-wishlist" title="Remove from Wishlist" style="position: absolute; top: 8px; right: 8px; z-index: 10; background: rgba(0, 0, 0, 0.85); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; border-radius: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: all 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.9)'; this.style.color='#ffffff';" onmouseout="this.style.background='rgba(0, 0, 0, 0.85)'; this.style.color='#f87171';" onclick="event.stopPropagation(); window.removeWishlistGame(${game.id}, '${(game.title || '').replace(/'/g, "\\'")}');">
+        ? `<button class="btn-card-delete-wishlist" title="Remove from Wishlist" style="position: absolute; top: 8px; right: 8px; z-index: 10; background: rgba(0, 0, 0, 0.85); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; border-radius: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: all 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.9)'; this.style.color='#ffffff';" onmouseout="this.style.background='rgba(0, 0, 0, 0.85)'; this.style.color='#f87171';" onclick="event.stopPropagation(); window.removeWishlistGame(${game.id}, '${escapedTitle}');">
                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
            </button>` 
+        : '';
+
+    const wishlistLocalActionsHtml = isWishlist
+        ? `
+            <div class="wishlist-link-row">
+                <button class="wishlist-link-btn btn-card-link-folder-archive" title="Link this wishlist game to a local folder or archive" onclick="event.stopPropagation(); window.pickWishlistLocalPath(${game.id}, '${escapedTitle}');">
+                    <i data-lucide="folder-archive"></i>
+                    <span>Link Folder / Archive</span>
+                </button>
+            </div>
+        `
         : '';
 
     const coverHtml = game.cover_url
@@ -1264,6 +2912,7 @@ function createGameCard(game) {
             <div class="card-tags-row">
                 ${tagsHtml || `<span class="card-tag">${game.category || 'General'}</span>`}
             </div>
+            ${wishlistLocalActionsHtml}
         </div>
     `;
 
@@ -1320,7 +2969,78 @@ function guessEngineLabel(game) {
     return 'Standalone Build';
 }
 
+function updateOverviewCover(coverUrl, title = '') {
+    const coverFrame = document.getElementById('ov-cover-frame');
+    const coverImg = document.getElementById('ov-cover-image');
+    const coverFallback = document.getElementById('ov-cover-fallback');
+    if (!coverFrame || !coverImg || !coverFallback) return;
+
+    const fallbackLabel = (title || '?').charAt(0).toUpperCase();
+    coverFallback.textContent = fallbackLabel;
+    coverImg.alt = title ? `${title} cover art` : 'Game cover';
+
+    if (!coverUrl) {
+        delete coverImg.dataset.pendingSrc;
+        delete coverFrame.dataset.coverShape;
+        coverImg.removeAttribute('src');
+        coverImg.style.display = 'none';
+        coverFallback.style.display = 'flex';
+        return;
+    }
+
+    const nextUrl = String(coverUrl).trim();
+    if (!nextUrl) {
+        delete coverImg.dataset.pendingSrc;
+        delete coverFrame.dataset.coverShape;
+        coverImg.removeAttribute('src');
+        coverImg.style.display = 'none';
+        coverFallback.style.display = 'flex';
+        return;
+    }
+
+    coverImg.dataset.pendingSrc = nextUrl;
+    delete coverFrame.dataset.coverShape;
+
+    const preloader = new Image();
+    preloader.referrerPolicy = 'no-referrer';
+    preloader.onload = () => {
+        if (coverImg.dataset.pendingSrc !== nextUrl) return;
+        if (preloader.naturalWidth && preloader.naturalHeight) {
+            coverFrame.dataset.coverShape = preloader.naturalWidth >= preloader.naturalHeight ? 'landscape' : 'portrait';
+        }
+    };
+    preloader.onerror = () => {
+        // Ignore preloader errors so external CDN referrer checks on detached JS images do not break DOM image loading
+    };
+    preloader.src = nextUrl;
+
+    coverImg.onload = () => {
+        if (coverImg.dataset.pendingSrc !== nextUrl) return;
+        if (coverImg.naturalWidth && coverImg.naturalHeight) {
+            coverFrame.dataset.coverShape = coverImg.naturalWidth >= coverImg.naturalHeight ? 'landscape' : 'portrait';
+        }
+        coverImg.style.display = 'block';
+        coverFallback.style.display = 'none';
+    };
+    coverImg.onerror = () => {
+        if (coverImg.dataset.pendingSrc !== nextUrl) return;
+        delete coverFrame.dataset.coverShape;
+        coverImg.removeAttribute('src');
+        coverImg.style.display = 'none';
+        coverFallback.style.display = 'flex';
+    };
+
+    coverImg.referrerPolicy = 'no-referrer';
+    coverImg.src = nextUrl;
+    coverImg.style.display = 'block';
+    coverFallback.style.display = 'none';
+    if (coverImg.complete && coverImg.naturalWidth > 0) {
+        coverFrame.dataset.coverShape = coverImg.naturalWidth >= coverImg.naturalHeight ? 'landscape' : 'portrait';
+    }
+}
+
 function renderOverview(game) {
+    currentGame = game;
     const isExe = game.file_type === 'exe' || game.file_type === 'folder';
     const isWishlist = game.file_type === 'wishlist';
     const currentIndex = allGames.findIndex(entry => entry.id === game.id);
@@ -1353,9 +3073,7 @@ function renderOverview(game) {
         : (game.folder_path.length > 30 ? game.folder_path.substring(0, 30) + '...' : game.folder_path);
     document.getElementById('ov-type-text').textContent = isWishlist ? 'WISHLIST ENTRY' : (isExe ? 'INSTALLED EXE' : 'ZIP/RAR ARCHIVE');
     const launchBtn = document.getElementById('ov-btn-launch');
-    const folderBtn = document.getElementById('ov-btn-folder');
     if (launchBtn) launchBtn.disabled = isWishlist;
-    if (folderBtn) folderBtn.disabled = isWishlist;
     
     // Metrics
     updateStarPickerUI(game.user_score);
@@ -1370,20 +3088,7 @@ function renderOverview(game) {
     document.getElementById('ov-last-seen-text').textContent = formatDateTime(game.last_seen_at);
     document.getElementById('ov-missing-status-text').textContent = `${game.missing_scan_count || 0} missed scan(s)`;
 
-    const coverImg = document.getElementById('ov-cover-image');
-    const coverFallback = document.getElementById('ov-cover-fallback');
-    if (coverImg && coverFallback) {
-        if (game.cover_url) {
-            coverImg.src = game.cover_url;
-            coverImg.style.display = 'block';
-            coverFallback.style.display = 'none';
-        } else {
-            coverImg.removeAttribute('src');
-            coverImg.style.display = 'none';
-            coverFallback.style.display = 'flex';
-            coverFallback.textContent = (game.title || '?').charAt(0).toUpperCase();
-        }
-    }
+    updateOverviewCover(game.cover_url, game.title);
     
     // Gallery
     const gallery = document.getElementById('ov-gallery');
@@ -1421,15 +3126,7 @@ function renderOverview(game) {
     }
 
     // Description
-    document.getElementById('ov-description').textContent = game.description || 'No description available yet. Click above or use the companion extension to auto-scrape from F95zone or DLsite!';
-    const descBtn = document.getElementById('ov-btn-fetch-desc');
-    if (descBtn) {
-        if (!game.description || game.description.includes('No description available')) {
-            descBtn.style.display = 'inline-flex';
-        } else {
-            descBtn.style.display = 'none';
-        }
-    }
+    document.getElementById('ov-description').textContent = game.description || 'No description available yet. Use Fetch Info above or the companion extension to auto-scrape from F95zone or DLsite!';
 
     // Journal
     const jList = document.getElementById('ov-journal-list');
@@ -1453,18 +3150,67 @@ function renderOverview(game) {
 
     // Sources
     const sList = document.getElementById('ov-source-list');
-    if (game.source_url && game.source_url.startsWith('http')) {
-        sList.innerHTML = `
-            <div class="source-card">
-                <div class="source-top">
-                    <div class="source-badge-main">
-                        <span class="pill-primary">${game.source_type.toUpperCase()}</span>
-                        <span>ID: ${game.source_id || 'Linked'}</span>
+    const sources = game.sources && game.sources.length > 0 ? game.sources : (game.source_url ? [{id: 'legacy', source_type: game.source_type || 'unknown', source_url: game.source_url, source_id: game.source_id, is_preferred: true}] : []);
+    
+    if (sources.length > 0) {
+        sList.innerHTML = sources.map(s => `
+            <div class="source-card" style="display:flex; flex-direction:column; gap:6px; border: 1px solid ${s.is_preferred ? 'rgba(56, 189, 248, 0.4)' : 'rgba(255, 255, 255, 0.08)'}; background: ${s.is_preferred ? 'rgba(56, 189, 248, 0.05)' : 'rgba(255, 255, 255, 0.02)'}; border-radius: 8px; padding: 10px; margin-bottom: 6px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; align-items:center; gap: 8px;">
+                        <span class="pill-primary" style="background: ${s.is_preferred ? '#0284c7' : 'rgba(255,255,255,0.1)'};">${(s.source_type || 'unknown').toUpperCase()}</span>
+                        ${s.is_preferred ? `<span style="font-size:0.7rem; color:#38bdf8; font-weight:700; display:flex; align-items:center; gap:3px;"><i data-lucide="star" style="width:12px;height:12px;fill:#38bdf8;"></i> Preferred</span>` : ''}
+                        <span style="font-size:0.75rem; color:#94a3b8;">ID: ${s.source_id || 'N/A'}</span>
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                        ${!s.is_preferred && s.id !== 'legacy' ? `<button class="btn-secondary btn-src-prefer" data-id="${s.id}" title="Make Preferred" style="padding: 3px 8px; font-size: 0.7rem; display:flex; align-items:center; gap:4px;"><i data-lucide="star" style="width:12px;height:12px;"></i> Prefer</button>` : ''}
+                        ${s.id !== 'legacy' ? `<button class="btn-secondary btn-src-delete" data-id="${s.id}" title="Remove Source" style="padding: 3px 6px; font-size: 0.7rem; color:#fca5a5; border-color:rgba(239,68,68,0.3);"><i data-lucide="trash-2" style="width:12px;height:12px;"></i></button>` : ''}
                     </div>
                 </div>
-                <a href="${game.source_url}" target="_blank" class="source-link">${game.source_url}</a>
+                <a href="${s.source_url}" target="_blank" class="source-link" style="font-size:0.8rem; word-break:break-all;">${s.source_url}</a>
             </div>
-        `;
+        `).join('');
+        
+        if (window.lucide) lucide.createIcons();
+        
+        sList.querySelectorAll('.btn-src-prefer').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const sid = btn.dataset.id;
+                if (!sid || !currentGame) return;
+                btn.disabled = true;
+                try {
+                    const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/sources/${sid}/prefer`, { method: 'POST' });
+                    if (!res.ok) throw new Error("Failed to prefer source");
+                    const data = await res.json();
+                    currentGame = data.game;
+                    renderOverview(currentGame);
+                    await loadGames();
+                    if (data.warning) alert(data.warning);
+                } catch (err) {
+                    alert(err.message);
+                    btn.disabled = false;
+                }
+            });
+        });
+        
+        sList.querySelectorAll('.btn-src-delete').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const sid = btn.dataset.id;
+                if (!sid || !currentGame) return;
+                if (!confirm("Are you sure you want to remove this metadata source?")) return;
+                btn.disabled = true;
+                try {
+                    const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/sources/${sid}`, { method: 'DELETE' });
+                    if (!res.ok) throw new Error("Failed to remove source");
+                    const data = await res.json();
+                    currentGame = data.game;
+                    renderOverview(currentGame);
+                    await loadGames();
+                } catch (err) {
+                    alert(err.message);
+                    btn.disabled = false;
+                }
+            });
+        });
     } else {
         sList.innerHTML = `
             <div class="source-card">
@@ -1497,6 +3243,8 @@ function renderOverview(game) {
     if (linkInputEl) linkInputEl.value = '';
     const localLinkBtnEl = document.getElementById('ov-btn-link-local');
     if (localLinkBtnEl) localLinkBtnEl.style.display = isWishlist ? 'flex' : 'none';
+    const pickFolderArchiveBtnEl = document.getElementById('ov-btn-link-folder-archive');
+    if (pickFolderArchiveBtnEl) pickFolderArchiveBtnEl.style.display = isWishlist ? 'flex' : 'none';
     const localLinkFormEl = document.getElementById('ov-local-link-form');
     if (localLinkFormEl) localLinkFormEl.style.display = 'none';
     const localLinkSearchEl = document.getElementById('ov-local-link-search');
@@ -1535,6 +3283,9 @@ async function loadExtensionQueue() {
     try {
         const res = await fetch(`${API_BASE}/api/games/needs-metadata`);
         const games = await res.json();
+        refreshSettingsMetadataQueue({ force: true }).catch((error) => {
+            console.debug('Failed to refresh settings metadata queue', error);
+        });
         
         if (games.length === 0) {
             list.innerHTML = `<div style="grid-column: span 3; padding: 24px; text-align: center; color: var(--badge-green); font-weight: 700;">All identified games have cover images and metadata synced.</div>`;
@@ -1614,4 +3365,80 @@ window.removeWishlistGame = async function(id, title) {
     }
 };
 
+window.pickWishlistLocalPath = async function(id, title, pickMode) {
+    if (!window.pywebview || !window.pywebview.api) {
+        alert("Local path picking is only available in the desktop app build.");
+        return;
+    }
 
+    if (!pickMode || (pickMode !== 'folder' && pickMode !== 'archive')) {
+        const choiceModal = document.getElementById('local-path-choice-modal');
+        const choiceTitle = document.getElementById('local-path-choice-title');
+        const btnFolder = document.getElementById('btn-choice-pick-folder');
+        const btnArchive = document.getElementById('btn-choice-pick-archive');
+        const btnClose = document.getElementById('btn-close-local-path-choice');
+        if (choiceModal && btnFolder && btnArchive) {
+            if (choiceTitle) choiceTitle.textContent = `Link "${title}" to Local Source`;
+            choiceModal.style.display = 'flex';
+
+            const cleanup = () => {
+                choiceModal.style.display = 'none';
+                btnFolder.onclick = null;
+                btnArchive.onclick = null;
+                if (btnClose) btnClose.onclick = null;
+            };
+
+            if (btnClose) btnClose.onclick = cleanup;
+            choiceModal.onclick = (e) => {
+                if (e.target === choiceModal) cleanup();
+            };
+
+            btnFolder.onclick = () => {
+                cleanup();
+                window.pickWishlistLocalPath(id, title, 'folder');
+            };
+            btnArchive.onclick = () => {
+                cleanup();
+                window.pickWishlistLocalPath(id, title, 'archive');
+            };
+            if (window.lucide) lucide.createIcons();
+            return;
+        }
+    }
+
+    const initialDir = (appSettings && appSettings.games_dir) ? appSettings.games_dir : '';
+    const picker = pickMode === 'archive'
+        ? window.pywebview.api.browse_local_game_file
+        : window.pywebview.api.browse_folder;
+
+    if (!picker) {
+        alert("This desktop build does not expose the required local picker yet.");
+        return;
+    }
+
+    try {
+        const selectedPath = await picker(initialDir);
+        if (!selectedPath) return;
+
+        const res = await fetch(`${API_BASE}/api/games/${id}/link-picked-local`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ selected_path: selectedPath })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.detail || 'Failed to link wishlist item to the selected local source');
+        }
+
+        await fetchStats();
+        await loadGames();
+
+        if (currentGame && currentGame.id === id) {
+            await openOverviewPage(data.game.id);
+        } else {
+            alert(data.message || `Linked "${title}" to your local library successfully.`);
+        }
+    } catch (err) {
+        alert(`Failed to link "${title}" to a local source: ${err.message}`);
+    }
+};

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 - 2026-07-08
+
+- Revamped the settings experience around real library defaults, source preference, maintenance actions, and extension health
+- Reworked smart scan into tracked background jobs with progress, cancellation, and a cleaner review flow
+- Added durable source-map recovery so rescans can preserve matched metadata even when local folder names are noisy
+- Expanded wishlist flows with direct source search, browser handoff, manual local linking, and auto-graduation into scanned games
+- Improved DLsite scraping fallbacks, title normalization, and smart matching coverage with new Python and regression tests
+- Published the Windows package as `XDir-0.2.0-windows.zip`
+
 ## 0.1.1 - 2026-07-06
 
 - Added an immediate branded startup splash so first launch no longer looks hung

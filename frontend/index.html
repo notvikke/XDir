@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -35,6 +35,14 @@
     </style>
 </head>
 <body>
+    <div class="window-resize-hitbox window-resize-hitbox-top-left" data-resize-edge="top-left" aria-hidden="true"></div>
+    <div class="window-resize-hitbox window-resize-hitbox-top" data-resize-edge="top" aria-hidden="true"></div>
+    <div class="window-resize-hitbox window-resize-hitbox-top-right" data-resize-edge="top-right" aria-hidden="true"></div>
+    <div class="window-resize-hitbox window-resize-hitbox-right" data-resize-edge="right" aria-hidden="true"></div>
+    <div class="window-resize-hitbox window-resize-hitbox-bottom-right" data-resize-edge="bottom-right" aria-hidden="true"></div>
+    <div class="window-resize-hitbox window-resize-hitbox-bottom" data-resize-edge="bottom" aria-hidden="true"></div>
+    <div class="window-resize-hitbox window-resize-hitbox-bottom-left" data-resize-edge="bottom-left" aria-hidden="true"></div>
+    <div class="window-resize-hitbox window-resize-hitbox-left" data-resize-edge="left" aria-hidden="true"></div>
     <div id="app-splash" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #0b0c10; z-index: 999999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.4s ease, visibility 0.4s ease;">
         <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 8px;">
             <img src="static/img/xdir-mark-128.png" alt="XDir" style="width: 44px; height: 44px; border-radius: 12px; display: block; box-shadow: 0 8px 24px rgba(59, 130, 246, 0.35);">
@@ -45,7 +53,7 @@
     </div>
 
     <!-- Top Navigation Bar -->
-    <header class="top-nav">
+    <header class="top-nav pywebview-drag-region">
         <div class="nav-left">
             <button class="logo-badge" id="btn-home-logo" type="button" title="Go to Library">
                 <img class="logo-icon" src="static/img/xdir-mark-128.png" alt="XDir">
@@ -66,6 +74,7 @@
                 </button>
             </nav>
         </div>
+        <div class="titlebar-drag-spacer pywebview-drag-region" aria-hidden="true"></div>
         <div class="nav-right">
             <div class="quick-status" id="ext-status-pill" style="cursor: pointer;" title="Click to view extension sync status" onclick="document.querySelector('[data-tab=\'extension\']').click()">
                 <span class="status-dot offline" id="ext-status-dot"></span>
@@ -75,7 +84,7 @@
                 <span class="status-dot" style="background: #3b82f6; box-shadow: 0 0 8px #3b82f6;"></span>
                 <span class="status-label" style="color: #60a5fa;">Help & Tutorial</span>
             </div>
-            <button class="btn-icon" id="btn-add-wishlist" title="Add Game to Wishlist from URL" style="color: #60a5fa; border-color: rgba(96, 165, 250, 0.3); background: rgba(96, 165, 250, 0.1);">
+            <button class="btn-icon" id="btn-add-wishlist" title="Add Game to Wishlist by URL or Search" style="color: #60a5fa; border-color: rgba(96, 165, 250, 0.3); background: rgba(96, 165, 250, 0.1);">
                 <i data-lucide="plus-circle"></i>
             </button>
             <div class="window-controls" style="-webkit-app-region: no-drag;">
@@ -168,12 +177,34 @@
                         </div>
 
                         <div class="toolbar-actions">
+                            <select class="sort-select" id="tiles-per-row-select" title="Tiles per row" aria-label="Tiles per row">
+                                <option value="auto">Auto Tiles</option>
+                                <option value="3">3 Tiles / Row</option>
+                                <option value="4">4 Tiles / Row</option>
+                                <option value="5">5 Tiles / Row</option>
+                                <option value="6">6 Tiles / Row</option>
+                                <option value="7">7 Tiles / Row</option>
+                            </select>
                             <span class="results-count" id="results-count">0/0</span>
                             <select class="sort-select" id="sort-select">
                                 <option value="title">Sort by Title</option>
                                 <option value="date">Date Added to XDir</option>
                                 <option value="rating">Rating Score</option>
                             </select>
+                            <div class="scan-toolbar-progress" id="scan-toolbar-progress" hidden>
+                                <button type="button" class="scan-toolbar-progress-button" id="btn-open-smart-scan-progress" title="View smart scan progress">
+                                    <div class="scan-toolbar-progress-meta">
+                                        <span id="scan-toolbar-progress-label">Smart scan running</span>
+                                        <span id="scan-toolbar-progress-count">0 / 0</span>
+                                    </div>
+                                    <div class="scan-toolbar-progress-track">
+                                        <div class="scan-toolbar-progress-fill" id="scan-toolbar-progress-fill" style="width: 0%;"></div>
+                                    </div>
+                                </button>
+                                <button type="button" class="btn-secondary btn-icon-sm scan-toolbar-cancel" id="btn-cancel-smart-scan-toolbar" title="Cancel smart scan">
+                                    <i data-lucide="x"></i>
+                                </button>
+                            </div>
                             <button class="btn-primary" id="btn-add-game">
                                 <i data-lucide="plus"></i>
                                 <span>Scan Directory</span>
@@ -263,156 +294,541 @@
                 <aside class="settings-sidebar">
                     <div class="settings-nav-header">
                         <h3>Settings sections</h3>
-                        <span>Choose a domain to configure.</span>
+                        <span>Configure real XDir capabilities, not placeholder toggles.</span>
                     </div>
                     <div class="settings-nav-list">
-                        <button class="settings-nav-item active" data-section="media">
-                            <i data-lucide="wand-2"></i>
+                        <button class="settings-nav-item active" data-section="defaults">
+                            <i data-lucide="folder-cog"></i>
                             <div class="set-text">
-                                <h4>Scraper & Metadata Fixer</h4>
-                                <span>Fix titles, covers & screenshots</span>
+                                <h4>Library Defaults</h4>
+                                <span>Directory, startup, archive, retention</span>
                             </div>
                         </button>
-                        <button class="settings-nav-item" data-section="updates">
-                            <i data-lucide="refresh-cw"></i>
+                        <button class="settings-nav-item" data-section="sources">
+                            <i data-lucide="radar"></i>
                             <div class="set-text">
-                                <h4>Game Updates</h4>
-                                <span>Auto-check intervals & sync</span>
+                                <h4>Sources & Matching</h4>
+                                <span>Preferred source strategy and coverage</span>
                             </div>
                         </button>
-                        <button class="settings-nav-item" data-section="system">
-                            <i data-lucide="cpu"></i>
+                        <button class="settings-nav-item" data-section="maintenance">
+                            <i data-lucide="shield-check"></i>
                             <div class="set-text">
-                                <h4>System & Launch Options</h4>
-                                <span>Archive modes & local paths</span>
+                                <h4>Maintenance & Repair</h4>
+                                <span>Scan flows, metadata repair, resets</span>
+                            </div>
+                        </button>
+                        <button class="settings-nav-item" data-section="companion">
+                            <i data-lucide="plug-zap"></i>
+                            <div class="set-text">
+                                <h4>Companion & Queue</h4>
+                                <span>Chrome bridge health and metadata queue</span>
                             </div>
                         </button>
                     </div>
                 </aside>
 
                 <section class="settings-content">
-                    <!-- SECTION 1: SCRAPER & METADATA FIXER -->
-                    <div class="set-panel active" id="set-media">
-                        <div class="set-card-main">
-                            <div class="set-card-top">
-                                <div class="set-title-row">
-                                    <i data-lucide="wand-2" class="set-icon-red"></i>
-                                    <h3>Fix Titles & Refetch All Metadata</h3>
-                                </div>
-                                <p class="set-desc">Scan all games in your library to clean up noisy titles (removing bracketed release groups, ugly tags, and version strings) and re-scrape fresh high-definition cover images and 15+ screenshots from your primary provider.</p>
+                    <div class="settings-hero">
+                        <div class="settings-hero-copy">
+                            <span class="settings-eyebrow">Preferences & Operations</span>
+                            <h2>Align XDir with how you discover, match, and maintain your library.</h2>
+                            <p>Everything on this page maps to live functionality today: local scans, source-aware metadata recovery, repair jobs, and Chrome companion health.</p>
+                        </div>
+                        <div class="settings-hero-actions">
+                            <button class="btn-primary" id="btn-save-preferences">
+                                <i data-lucide="save"></i>
+                                <span>Save Preferences</span>
+                            </button>
+                        </div>
+                        <div class="settings-hero-grid">
+                            <div class="settings-kpi-card settings-kpi-library">
+                                <span class="settings-kpi-label">Library Footprint</span>
+                                <strong id="settings-kpi-library-total">0</strong>
+                                <span class="settings-kpi-detail" id="settings-kpi-library-detail">Installed 0, archives 0, wishlist 0</span>
                             </div>
-                            <div class="form-row">
-                                <label>Primary Scraper Source</label>
-                                <select class="input-dark" id="set-media-scraper">
-                                    <option value="f95zone" selected>F95Zone (Best for Adult RPGM, Ren'Py, Unity, VN Games - Highest Accuracy)</option>
-                                    <option value="dlsite">DLsite (Best for Japanese Doujin / RJ Codes)</option>
-                                    <option value="itch">Itch.io (Best for Western Indie & Demo titles)</option>
-                                </select>
+                            <div class="settings-kpi-card settings-kpi-unresolved">
+                                <span class="settings-kpi-label">Needs Attention</span>
+                                <strong id="settings-kpi-unresolved-count">0</strong>
+                                <span class="settings-kpi-detail" id="settings-kpi-unresolved-detail">Unidentified entries and metadata gaps</span>
                             </div>
-                            <div class="set-actions-row" style="margin-top: 24px; display: flex; flex-direction: column; gap: 12px;">
-                                <button class="btn-primary" id="btn-fix-metadata" style="padding: 14px 20px; font-size: 1rem; justify-content: center;">
-                                    <i data-lucide="wand-2"></i>
-                                    <span>Fix Titles & Refetch All Metadata (Covers, Screenshots & Titles)</span>
-                                </button>
-                                <button class="btn-secondary" id="btn-rematch-f95" style="padding: 12px 18px; justify-content: center;">
-                                    <i data-lucide="search"></i>
-                                    <span>Rematch Unidentified Games from F95Zone</span>
-                                </button>
+                            <div class="settings-kpi-card settings-kpi-source">
+                                <span class="settings-kpi-label">Preferred Source</span>
+                                <strong id="settings-kpi-source">F95Zone</strong>
+                                <span class="settings-kpi-detail" id="settings-kpi-source-detail">Used first for smart scan and search defaults</span>
+                            </div>
+                            <div class="settings-kpi-card settings-kpi-companion">
+                                <span class="settings-kpi-label">Companion Status</span>
+                                <strong id="settings-kpi-companion">Offline</strong>
+                                <span class="settings-kpi-detail" id="settings-kpi-companion-detail">Waiting for Chrome extension heartbeat</span>
                             </div>
                         </div>
                     </div>
 
-                    <!-- SECTION 2: GAME UPDATES -->
-                    <div class="set-panel" id="set-updates">
-                        <div class="set-card-main">
-                            <div class="set-card-top">
-                                <div class="set-title-row">
-                                    <i data-lucide="refresh-cw" class="set-icon-red"></i>
-                                    <h3>Background Sync & Health</h3>
+                    <div class="set-panel active" id="set-defaults">
+                        <div class="settings-panel-grid">
+                            <div class="set-card-main">
+                                <div class="set-card-top">
+                                    <div class="set-title-row">
+                                        <i data-lucide="folder-cog" class="set-icon-red"></i>
+                                        <h3>Library discovery defaults</h3>
+                                    </div>
+                                    <p class="set-desc">Choose where XDir scans, when it should look automatically, and how safely it should treat missing files and archives.</p>
                                 </div>
-                                <p class="set-desc">Control how aggressively XDir refreshes library metadata and track how many titles still need review or online sync.</p>
+                                <div class="set-toggle-row">
+                                    <label class="switch">
+                                        <input type="checkbox" id="toggle-startup-scan" checked>
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <div class="toggle-text">
+                                        <h4>Run a directory scan when XDir starts</h4>
+                                        <span>Turn this off if you want faster startup and prefer manual discovery runs.</span>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <label>Primary game setups directory</label>
+                                    <div class="settings-browse-row">
+                                        <input type="text" id="setting-games-dir" placeholder="e.g. C:\Games or D:\Game setups" class="input-dark">
+                                        <button class="btn-secondary" id="btn-browse-dir">Browse...</button>
+                                    </div>
+                                    <span class="set-help">Normal Scan uses this root to discover folders, archives, and executables that are not in your library yet.</span>
+                                </div>
+                                <div class="form-row">
+                                    <label>Archive launch behavior</label>
+                                    <select class="input-dark" id="set-launch-archive-mode">
+                                        <option value="explorer">Open archive in Explorer / WinRAR / 7-Zip immediately</option>
+                                        <option value="extract">Extract a temporary sandboxed copy before launching</option>
+                                    </select>
+                                </div>
+                                <div class="form-row">
+                                    <label>Missing-entry grace scans</label>
+                                    <input type="number" min="1" max="10" step="1" id="setting-missing-grace-scans" class="input-dark" placeholder="3">
+                                    <span class="set-help">How many consecutive scans a missing local entry can be absent before XDir removes it from the library.</span>
+                                </div>
                             </div>
-                            <div class="set-toggle-row">
-                                <label class="switch">
-                                    <input type="checkbox" id="toggle-auto-update" checked>
-                                    <span class="slider round"></span>
-                                </label>
-                                <div class="toggle-text">
-                                    <h4>Keep linked games metadata fresh in the background</h4>
-                                    <span>Allows XDir to prioritize metadata refresh flows for already linked titles.</span>
+
+                            <div class="set-card-main">
+                                <div class="set-card-top">
+                                    <div class="set-title-row">
+                                        <i data-lucide="activity" class="set-icon-red"></i>
+                                        <h3>Current library health</h3>
+                                    </div>
+                                    <p class="set-desc">A live view of the library state behind the preferences above.</p>
                                 </div>
-                            </div>
-                            <div class="set-status-box">
-                                <div class="stat-col">
-                                    <span class="lbl">Preferred Scraper</span>
-                                    <span class="badge-dark" id="set-stat-source">F95ZONE</span>
+                                <div class="settings-summary-grid">
+                                    <div class="settings-summary-card">
+                                        <span class="settings-summary-label">Library entries</span>
+                                        <strong id="settings-library-count">0</strong>
+                                    </div>
+                                    <div class="settings-summary-card">
+                                        <span class="settings-summary-label">Installed / folders</span>
+                                        <strong id="settings-installed-count">0</strong>
+                                    </div>
+                                    <div class="settings-summary-card">
+                                        <span class="settings-summary-label">Archives</span>
+                                        <strong id="settings-archives-count">0</strong>
+                                    </div>
+                                    <div class="settings-summary-card">
+                                        <span class="settings-summary-label">Wishlist</span>
+                                        <strong id="settings-wishlist-count">0</strong>
+                                    </div>
                                 </div>
-                                <div class="stat-col">
-                                    <span class="lbl">Wishlist Queue</span>
-                                    <span class="badge-dark" id="set-stat-updates">0</span>
+                                <div class="settings-note">
+                                    <strong>Local-first runtime.</strong>
+                                    XDir stores metadata locally and only reaches out when you explicitly scan, search, or repair library entries.
                                 </div>
-                                <div class="stat-col">
-                                    <span class="lbl">Needs Review</span>
-                                    <span class="badge-red" id="set-stat-queue">0 games</span>
+                                <div class="form-row">
+                                    <label>Local API server</label>
+                                    <input type="text" value="http://127.0.0.1:8765" readonly class="input-dark">
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- SECTION 3: SYSTEM & LAUNCH OPTIONS -->
-                    <div class="set-panel" id="set-system">
-                        <div class="set-card-main">
-                            <div class="set-card-top">
-                                <div class="set-title-row">
-                                    <i data-lucide="cpu" class="set-icon-red"></i>
-                                    <h3>Library Stability & Launch Behavior</h3>
+                    <div class="set-panel" id="set-sources">
+                        <div class="settings-panel-grid">
+                            <div class="set-card-main">
+                                <div class="set-card-top">
+                                    <div class="set-title-row">
+                                        <i data-lucide="radar" class="set-icon-red"></i>
+                                        <h3>Preferred metadata source</h3>
+                                    </div>
+                                    <p class="set-desc">Choose which provider XDir should favor first when smart scans search for matches and when unresolved-game or wishlist search opens with a default source tab.</p>
                                 </div>
-                                <p class="set-desc">Tune startup behavior, make directory tracking more resilient, and control how XDir opens archives and local folders.</p>
-                            </div>
-                            <div class="set-toggle-row">
-                                <label class="switch">
-                                    <input type="checkbox" id="toggle-startup-scan" checked>
-                                    <span class="slider round"></span>
-                                </label>
-                                <div class="toggle-text">
-                                    <h4>Run a background scan when XDir starts</h4>
-                                    <span>Turn this off if you want the fastest startup and prefer manual rescans.</span>
+                                <div class="form-row">
+                                    <label>Preferred source</label>
+                                    <select class="input-dark" id="set-preferred-source">
+                                        <option value="f95zone" selected>F95Zone: highest hit rate for adult VN, RPGM, Ren'Py, Unity, and forum-driven releases</option>
+                                        <option value="dlsite">DLsite: best when the title is sold as a Japanese doujin entry or RJ code</option>
+                                        <option value="itch">Itch.io: best for western indie builds, demos, and jam releases</option>
+                                    </select>
                                 </div>
-                            </div>
-                            <div class="form-row">
-                                <label>Archive Extraction Mode</label>
-                                <select class="input-dark" id="set-launch-archive-mode">
-                                    <option value="explorer">Open Archive in Windows Explorer / WinRAR / 7-Zip (Instant)</option>
-                                    <option value="extract">Extract Temporary Sandboxed Copy Before Launching</option>
-                                </select>
-                            </div>
-                            <div class="form-row">
-                                <label>Missing Game Grace Period</label>
-                                <input type="number" min="1" max="10" step="1" id="setting-missing-grace-scans" class="input-dark" placeholder="3">
-                                <span class="set-help">How many consecutive missed scans are allowed before XDir removes a missing entry from the library.</span>
-                            </div>
-                            <div class="form-row">
-                                <label>Primary Game Setups Directory</label>
-                                <div style="display: flex; gap: 8px; width: 100%;">
-                                    <input type="text" id="setting-games-dir" placeholder="e.g. C:\Games or D:\Game setups" class="input-dark" style="flex: 1;">
-                                    <button class="btn-secondary" id="btn-browse-dir" style="padding: 0 16px; white-space: nowrap;">Browse...</button>
+                                <div class="settings-note">
+                                    <strong id="settings-source-active-badge">F95Zone</strong>
+                                    <span id="settings-source-summary">will be queried first by smart metadata scan and opened first in the search modals that resolve uncertain matches.</span>
                                 </div>
                             </div>
-                            <div class="form-row">
-                                <label>Local API Server URL</label>
-                                <input type="text" value="http://127.0.0.1:8765" readonly class="input-dark">
+
+                            <div class="set-card-main">
+                                <div class="set-card-top">
+                                    <div class="set-title-row">
+                                        <i data-lucide="orbit" class="set-icon-red"></i>
+                                        <h3>Source coverage at a glance</h3>
+                                    </div>
+                                    <p class="set-desc">Use the right provider for the right job instead of pushing every title through the same search path.</p>
+                                </div>
+                                <div class="settings-source-grid">
+                                    <article class="settings-source-card source-f95zone">
+                                        <span class="settings-source-badge">F95Zone</span>
+                                        <h4>Forum-first correction</h4>
+                                        <p>Best for community-released adult games, update tracking, and title cleanup when folder names are noisy.</p>
+                                    </article>
+                                    <article class="settings-source-card source-dlsite">
+                                        <span class="settings-source-badge">DLsite</span>
+                                        <h4>Doujin and RJ-heavy catalog</h4>
+                                        <p>Best when the local title resembles Japanese catalog names or you expect an RJ / VJ store listing.</p>
+                                    </article>
+                                    <article class="settings-source-card source-itch">
+                                        <span class="settings-source-badge">Itch.io</span>
+                                        <h4>Indie demo coverage</h4>
+                                        <p>Best for western prototype builds, small-team releases, and titles that live outside forum ecosystems.</p>
+                                    </article>
+                                    <article class="settings-source-card source-steam">
+                                        <span class="settings-source-badge">Steam</span>
+                                        <h4>Manual search support</h4>
+                                        <p>Steam remains available in universal search for wishlist and manual lookups, even though smart scan does not auto-match through it.</p>
+                                    </article>
+                                </div>
                             </div>
-                            <div class="set-actions-row">
-                                <button class="btn-primary" id="btn-save-preferences">
-                                    <i data-lucide="save"></i>
-                                    <span>Save Preferences & Rescan</span>
-                                </button>
+                        </div>
+                    </div>
+
+                    <div class="set-panel" id="set-maintenance">
+                        <div class="settings-panel-grid settings-panel-grid-wide">
+                            <div class="set-card-main">
+                                <div class="set-card-top">
+                                    <div class="set-title-row">
+                                        <i data-lucide="scan-search" class="set-icon-red"></i>
+                                        <h3>Scan flows</h3>
+                                    </div>
+                                    <p class="set-desc">Choose the smallest scan that fits the job so you do not reprocess more of the library than necessary.</p>
+                                </div>
+                                <div class="settings-action-grid">
+                                    <div class="settings-action-block tone-discovery">
+                                        <span class="settings-action-label">Discovery</span>
+                                        <h4>Normal scan</h4>
+                                        <p>Scans configured directories and imports newly discovered local games without reworking existing metadata links.</p>
+                                        <button class="btn-secondary settings-action-btn" id="btn-settings-scan-directory">
+                                            <i data-lucide="folder-search-2"></i>
+                                            <span>Scan Directory</span>
+                                        </button>
+                                    </div>
+                                    <div class="settings-action-block tone-smart">
+                                        <span class="settings-action-label">Repair unresolved</span>
+                                        <h4>Smart metadata scan</h4>
+                                        <p>Re-checks games with missing metadata, weak titles, or unresolved links and applies only high-confidence matches.</p>
+                                        <button class="btn-primary settings-action-btn" id="btn-settings-smart-scan">
+                                            <i data-lucide="sparkles"></i>
+                                            <span>Start Smart Scan</span>
+                                        </button>
+                                    </div>
+                                    <div class="settings-action-block tone-source">
+                                        <span class="settings-action-label">Source only</span>
+                                        <h4>Missing source scan</h4>
+                                        <p>Targets games that are still missing a primary online source and leaves fully linked entries alone.</p>
+                                        <button class="btn-secondary settings-action-btn" id="btn-settings-missing-source-scan">
+                                            <i data-lucide="link-2"></i>
+                                            <span>Find Missing Sources</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="set-card-main">
+                                <div class="set-card-top">
+                                    <div class="set-title-row">
+                                        <i data-lucide="shield-check" class="set-icon-red"></i>
+                                        <h3>Repair and refetch tools</h3>
+                                    </div>
+                                    <p class="set-desc">Use these when existing records need a full cleanup pass, a targeted rematch, or a hard reset of scraped metadata.</p>
+                                </div>
+                                <div class="settings-job-progress" id="settings-job-progress" hidden>
+                                    <div class="settings-job-progress-top">
+                                        <div class="settings-job-progress-copy">
+                                            <span class="settings-job-progress-kicker">Background Job</span>
+                                            <strong id="settings-job-progress-label">Processing library metadata...</strong>
+                                        </div>
+                                        <div class="settings-job-progress-meta">
+                                            <span id="settings-job-progress-count">0 / 0</span>
+                                            <span id="settings-job-progress-percent">0%</span>
+                                        </div>
+                                    </div>
+                                    <div class="settings-job-progress-track">
+                                        <div class="settings-job-progress-fill" id="settings-job-progress-fill" style="width: 0%;"></div>
+                                    </div>
+                                    <div class="settings-job-progress-current" id="settings-job-progress-current">Waiting for backend job...</div>
+                                </div>
+                                <div class="settings-action-stack">
+                                    <button class="btn-primary settings-action-btn settings-action-btn-lg" id="btn-fix-metadata">
+                                        <i data-lucide="wand-2"></i>
+                                        <span>Fix Titles & Refetch All Metadata</span>
+                                    </button>
+                                    <button class="btn-secondary settings-action-btn" id="btn-rematch-f95">
+                                        <i data-lucide="search"></i>
+                                        <span>Rematch Unidentified Games from F95Zone</span>
+                                    </button>
+                                    <button class="btn-secondary settings-action-btn settings-action-danger" id="btn-flush-metadata">
+                                        <i data-lucide="trash-2"></i>
+                                        <span>Flush All Scraped Metadata</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="set-panel" id="set-companion">
+                        <div class="settings-panel-grid">
+                            <div class="set-card-main">
+                                <div class="set-card-top">
+                                    <div class="set-title-row">
+                                        <i data-lucide="plug-zap" class="set-icon-red"></i>
+                                        <h3>Chrome companion health</h3>
+                                    </div>
+                                    <p class="set-desc">Keep an eye on the extension heartbeat and the local folder that Chrome should load as the unpacked companion.</p>
+                                </div>
+                                <div class="settings-companion-status-row">
+                                    <span class="settings-status-pill offline" id="settings-extension-status">Offline</span>
+                                    <span class="settings-companion-copy" id="settings-extension-detail">Waiting for a live heartbeat from the Chrome extension.</span>
+                                </div>
+                                <div class="form-row">
+                                    <label>Extension folder</label>
+                                    <div class="path-box" id="settings-extension-path">Waiting for extension path...</div>
+                                </div>
+                                <div class="settings-note">
+                                    <strong>Extension setup.</strong>
+                                    Load this folder as an unpacked extension in Chrome and keep the browser open when you want XDir to monitor metadata queue work.
+                                </div>
+                                <div class="set-actions-row">
+                                    <button class="btn-secondary" id="btn-settings-open-extension-tab">
+                                        <i data-lucide="external-link"></i>
+                                        <span>Open Extensions Workspace</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="set-card-main">
+                                <div class="set-card-top">
+                                    <div class="set-title-row">
+                                        <i data-lucide="list-collapse" class="set-icon-red"></i>
+                                        <h3>Metadata queue snapshot</h3>
+                                    </div>
+                                    <p class="set-desc">Identified games that still need covers or screenshots show up here so you can keep the companion workflow honest.</p>
+                                </div>
+                                <div class="settings-queue-summary">
+                                    <div>
+                                        <span class="settings-summary-label">Needs metadata right now</span>
+                                        <strong id="settings-metadata-queue-count">0</strong>
+                                        <span class="settings-kpi-detail" id="settings-metadata-queue-detail">Loading current queue...</span>
+                                    </div>
+                                </div>
+                                <div class="settings-queue-list" id="settings-metadata-queue-list">
+                                    <div class="settings-queue-empty">Loading metadata queue...</div>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </section>
             </div>
         </main>
+
+        <div class="source-modal-backdrop" id="scan-workflow-backdrop" style="display:none;"></div>
+        <div class="source-link-form source-modal-centered source-modal-lg source-modal-scroll source-modal-stack scan-workflow-modal" id="scan-workflow-modal" style="display:none;">
+            <div class="source-modal-header">
+                <div>
+                    <h3 class="source-modal-title">
+                        <i data-lucide="scan-search" class="source-modal-title-icon"></i>
+                        <span id="scan-workflow-title">Scan Your Library</span>
+                    </h3>
+                    <p class="scan-workflow-copy" id="scan-workflow-copy">Choose the scan mode that fits the work you want XDir to do right now.</p>
+                </div>
+                <button type="button" class="btn-secondary btn-icon-sm" id="btn-close-scan-workflow" title="Close scan workflow">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+
+            <div class="scan-workflow-view" id="scan-workflow-choice-view">
+                <div class="scan-mode-grid">
+                    <button type="button" class="scan-mode-card scan-mode-primary" id="btn-scan-normal">
+                        <span class="scan-mode-head">
+                            <span class="scan-mode-icon">
+                                <i data-lucide="folder-search"></i>
+                            </span>
+                            <span class="scan-mode-kicker">Safe library pass</span>
+                        </span>
+                        <span class="scan-mode-eyebrow">Normal Scan</span>
+                        <span class="scan-mode-title">Quick local discovery</span>
+                        <span class="scan-mode-copy">Find new game folders and add them to your library immediately without modifying names or metadata.</span>
+                    </button>
+                    <button type="button" class="scan-mode-card scan-mode-secondary" id="btn-scan-smart">
+                        <span class="scan-mode-head">
+                            <span class="scan-mode-icon">
+                                <i data-lucide="sparkles"></i>
+                            </span>
+                            <span class="scan-mode-kicker">Background cleanup</span>
+                        </span>
+                        <span class="scan-mode-eyebrow">Smart Metadata Scan</span>
+                        <span class="scan-mode-title">Clean & match library</span>
+                        <span class="scan-mode-copy">Normalize titles and match high-confidence covers and tags in the background. Review uncertain matches when ready.</span>
+                    </button>
+                    <button type="button" class="scan-mode-card scan-mode-tertiary" id="btn-scan-missing-source">
+                        <span class="scan-mode-head">
+                            <span class="scan-mode-icon">
+                                <i data-lucide="link-2"></i>
+                            </span>
+                            <span class="scan-mode-kicker">Source-only recovery</span>
+                        </span>
+                        <span class="scan-mode-eyebrow">Missing Source Scan</span>
+                        <span class="scan-mode-title">Only check games missing a main online source</span>
+                        <span class="scan-mode-copy">Leaves already linked titles alone and only searches for games that still need a primary online source before metadata can be fetched.</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="source-modal-backdrop" id="scan-results-backdrop" style="display:none;"></div>
+        <div class="source-link-form source-modal-centered source-modal-lg source-modal-scroll source-modal-stack scan-workflow-modal scan-results-modal" id="scan-results-modal" style="display:none;">
+            <div class="source-modal-header">
+                <div>
+                    <h3 class="source-modal-title">
+                        <i data-lucide="scan-search" class="source-modal-title-icon"></i>
+                        <span id="scan-results-title">Smart Metadata Scan</span>
+                    </h3>
+                    <p class="scan-workflow-copy" id="scan-results-copy">Track unresolved metadata matches and review anything that still needs attention.</p>
+                </div>
+                <button type="button" class="btn-secondary btn-icon-sm" id="btn-close-scan-results" title="Close smart scan details">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+
+            <div class="scan-results-view" id="scan-results-progress-view" hidden>
+                <div class="scan-progress-shell">
+                    <div class="scan-progress-head">
+                        <div>
+                            <span class="scan-progress-eyebrow">Smart Metadata Scan</span>
+                            <h4 id="smart-scan-status-title">Scanning metadata...</h4>
+                            <p id="smart-scan-status-text">Preparing unresolved games...</p>
+                        </div>
+                        <span class="scan-progress-game-count" id="smart-scan-game-counter">Game 0 / 0</span>
+                    </div>
+
+                    <div class="scan-progress-bar">
+                        <div class="scan-progress-fill" id="smart-scan-progress-fill"></div>
+                    </div>
+
+                    <div class="scan-progress-grid">
+                        <div class="scan-progress-panel">
+                            <span class="scan-progress-label">Current game</span>
+                            <strong id="smart-scan-current-name">Waiting for the backend to begin...</strong>
+                        </div>
+                        <div class="scan-progress-panel">
+                            <span class="scan-progress-label">Searching source</span>
+                            <strong id="smart-scan-current-source">Waiting...</strong>
+                        </div>
+                        <div class="scan-progress-panel">
+                            <span class="scan-progress-label">Trying query</span>
+                            <strong id="smart-scan-current-query">Waiting...</strong>
+                        </div>
+                        <div class="scan-progress-panel">
+                            <span class="scan-progress-label">Current stage</span>
+                            <strong id="smart-scan-current-stage">Preparing unresolved games...</strong>
+                        </div>
+                    </div>
+
+                    <div class="scan-counter-grid">
+                        <div class="scan-counter-card">
+                            <span class="scan-counter-label">Matched automatically</span>
+                            <strong id="smart-scan-count-matched">0</strong>
+                        </div>
+                        <div class="scan-counter-card">
+                            <span class="scan-counter-label">Needs review</span>
+                            <strong id="smart-scan-count-review">0</strong>
+                        </div>
+                        <div class="scan-counter-card">
+                            <span class="scan-counter-label">Not found</span>
+                            <strong id="smart-scan-count-not-found">0</strong>
+                        </div>
+                        <div class="scan-counter-card">
+                            <span class="scan-counter-label">Failed</span>
+                            <strong id="smart-scan-count-failed">0</strong>
+                        </div>
+                    </div>
+
+                    <div class="scan-summary-actions">
+                        <button type="button" class="btn-secondary" id="btn-smart-scan-cancel">
+                            <i data-lucide="x-circle"></i>
+                            <span>Cancel</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="scan-results-view" id="scan-results-summary-view" hidden>
+                <div class="scan-summary-shell">
+                    <span class="scan-progress-eyebrow" id="smart-scan-summary-eyebrow">Smart Metadata Scan</span>
+                    <h4 class="scan-summary-title" id="smart-scan-summary-title">Smart scan complete</h4>
+                    <p class="scan-summary-copy" id="smart-scan-summary-copy">0 games scanned.</p>
+                    <div class="scan-counter-grid">
+                        <div class="scan-counter-card">
+                            <span class="scan-counter-label">Auto-applied</span>
+                            <strong id="smart-scan-summary-matched">0</strong>
+                        </div>
+                        <div class="scan-counter-card">
+                            <span class="scan-counter-label">Needs review</span>
+                            <strong id="smart-scan-summary-review">0</strong>
+                        </div>
+                        <div class="scan-counter-card">
+                            <span class="scan-counter-label">Not found</span>
+                            <strong id="smart-scan-summary-not-found">0</strong>
+                        </div>
+                        <div class="scan-counter-card">
+                            <span class="scan-counter-label">Failed</span>
+                            <strong id="smart-scan-summary-failed">0</strong>
+                        </div>
+                    </div>
+                    <div class="scan-summary-actions">
+                        <button type="button" class="btn-primary" id="btn-smart-scan-review">
+                            <i data-lucide="list-checks"></i>
+                            <span>Review unresolved games</span>
+                        </button>
+                        <button type="button" class="btn-secondary" id="btn-smart-scan-run-again">
+                            <i data-lucide="rotate-cw"></i>
+                            <span>Run again</span>
+                        </button>
+                        <button type="button" class="btn-secondary" id="btn-smart-scan-close">
+                            <i data-lucide="check"></i>
+                            <span>Close</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="scan-results-view" id="scan-results-review-view" hidden>
+                <div class="scan-review-head">
+                    <div>
+                        <span class="scan-progress-eyebrow">Manual Review</span>
+                        <h4 class="scan-summary-title">Review unresolved games</h4>
+                        <p class="scan-summary-copy">Apply the best candidate when you agree with the match, or skip it and resolve the game later from its overview page.</p>
+                    </div>
+                    <div class="scan-summary-actions">
+                        <button type="button" class="btn-secondary" id="btn-smart-scan-review-back">
+                            <i data-lucide="arrow-left"></i>
+                            <span>Back to summary</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="smart-review-list" id="smart-scan-review-list"></div>
+            </div>
+        </div>
 
         <!-- FULL-WINDOW GAME OVERVIEW PAGE -->
         <div class="overview-modal" id="overview-modal" style="display:none;">
@@ -458,13 +874,10 @@
                                     <i data-lucide="gamepad-2"></i>
                                 </div>
                                 <h4>Play, track, manage</h4>
-                                <div class="control-actions">
+                                <div class="control-actions ov-primary-actions">
                                     <button class="btn-launch-big" id="ov-btn-launch">
                                         <i data-lucide="play"></i>
                                         <span id="ov-launch-text">Launch</span>
-                                    </button>
-                                    <button class="btn-folder-icon" id="ov-btn-folder" title="Open containing folder in Windows Explorer">
-                                        <i data-lucide="folder"></i>
                                     </button>
                                     <button class="btn-fetch-info" id="ov-btn-fetch" title="Scrape cover image, screenshots, tags, and developer directly from DLsite/F95zone/Itch">
                                         <i data-lucide="download-cloud"></i>
@@ -489,11 +902,11 @@
                         </div>
                         <div class="metric-val-row" style="margin-top: 4px; gap: 12px; align-items: center;">
                             <div id="user-star-picker" style="display: flex; gap: 4px; align-items: center;">
-                                <span class="user-star-btn" data-val="1" title="Rate 1 Star" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
-                                <span class="user-star-btn" data-val="2" title="Rate 2 Stars" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
-                                <span class="user-star-btn" data-val="3" title="Rate 3 Stars" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
-                                <span class="user-star-btn" data-val="4" title="Rate 4 Stars" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
-                                <span class="user-star-btn" data-val="5" title="Rate 5 Stars" style="font-size: 1.6rem; cursor: pointer; color: #334155; transition: transform 0.15s, color 0.15s;">&#9733;</span>
+                                <span class="user-star-btn" data-val="1" title="Rate 1 Star">&#9733;</span>
+                                <span class="user-star-btn" data-val="2" title="Rate 2 Stars">&#9733;</span>
+                                <span class="user-star-btn" data-val="3" title="Rate 3 Stars">&#9733;</span>
+                                <span class="user-star-btn" data-val="4" title="Rate 4 Stars">&#9733;</span>
+                                <span class="user-star-btn" data-val="5" title="Rate 5 Stars">&#9733;</span>
                             </div>
                             <span class="score-num" id="ov-score-num" style="font-size: 1.3rem; font-weight: 800; color: #f8fafc;">N/A</span>
                         </div>
@@ -526,7 +939,7 @@
 
                 <div class="ov-summary-grid">
                     <div class="ov-cover-card" id="ov-cover-card">
-                        <div class="ov-cover-frame">
+                        <div class="ov-cover-frame" id="ov-cover-frame">
                             <img id="ov-cover-image" src="" alt="Game cover" referrerpolicy="no-referrer">
                             <div class="ov-cover-fallback" id="ov-cover-fallback">X</div>
                         </div>
@@ -536,7 +949,7 @@
                         </div>
                     </div>
 
-                    <div class="ov-section-card">
+                    <div class="ov-section-card" id="ov-about-card">
                         <div class="section-top">
                             <h3>About & Tags</h3>
                         </div>
@@ -553,15 +966,12 @@
                         </div>
 
                         <div class="desc-section">
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                                <h4 style="margin:0;">Description</h4>
-                                <button class="btn-xs" id="ov-btn-fetch-desc" style="font-size:0.75rem; padding:5px 12px; display:none; border:1px solid var(--primary); color:var(--text-light); background:var(--primary); border-radius:6px; cursor:pointer; align-items:center; gap:5px; font-weight:600;"><i data-lucide="zap" style="width:14px;height:14px;"></i> Retrieve Metadata & Description</button>
-                            </div>
+                            <h4 style="margin:0 0 8px 0;">Description</h4>
                             <p id="ov-description">No description available. Click above or use Chrome extension to scrape from F95zone/DLsite!</p>
                         </div>
                     </div>
 
-                    <div class="ov-section-card">
+                    <div class="ov-section-card" id="ov-snapshot-card">
                         <div class="section-top">
                             <h3>Library Snapshot</h3>
                         </div>
@@ -581,71 +991,34 @@
                         </div>
 
                         <div class="source-actions" id="ov-source-actions">
-                            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:8px;">
-                                <button class="src-action-btn src-btn-f95" id="ov-btn-fetch-f95" title="Auto-fetch from F95Zone" style="padding:10px 5px; flex-direction:column; gap:6px; height:auto; justify-content:center;">
-                                    <i data-lucide="search"></i><span style="font-size:0.8rem; font-weight:700;">F95Zone</span>
-                                </button>
-                                <button class="src-action-btn src-btn-dlsite" id="ov-btn-search-dlsite" title="Search on DLsite" style="padding:10px 5px; flex-direction:column; gap:6px; height:auto; justify-content:center;">
-                                    <i data-lucide="external-link"></i><span style="font-size:0.8rem; font-weight:700;">DLsite</span>
-                                </button>
-                                <button class="src-action-btn src-btn-itch" id="ov-btn-search-itch" title="Search on Itch.io" style="padding:10px 5px; flex-direction:column; gap:6px; height:auto; justify-content:center;">
-                                    <i data-lucide="external-link"></i><span style="font-size:0.8rem; font-weight:700;">Itch.io</span>
+                            <div class="source-actions-grid">
+                                <button type="button" class="src-action-btn src-action-search src-btn-search" id="ov-btn-search-source" title="Search for metadata across all supported platforms">
+                                    <i data-lucide="search"></i>
+                                    <span>Search</span>
                                 </button>
                             </div>
-                            <button class="src-action-btn src-btn-link" id="ov-btn-link-source" title="Manually paste a DLsite, F95Zone, or Itch.io URL to link this game">
+                            <button type="button" class="src-action-btn src-btn-link" id="ov-btn-link-source" title="Manually paste a DLsite, F95Zone, Itch.io, or Steam URL to link this game">
                                 <i data-lucide="link"></i>
                                 <span>Link Source URL</span>
                             </button>
-                            <button class="src-action-btn src-btn-link" id="ov-btn-link-local" title="Match this wishlist item to a scanned local game" style="display:none; margin-top:8px;">
+                            <button type="button" class="src-action-btn src-btn-link source-action-spaced" id="ov-btn-link-local" title="Match this wishlist item to a scanned local game" style="display:none;">
                                 <i data-lucide="folder-search"></i>
                                 <span>Link to Local Entry</span>
                             </button>
-                            <button class="src-action-btn src-btn-wrong" id="ov-btn-mark-wrong" title="Clear current source data" style="margin-top:8px;">
+                            <button type="button" class="src-action-btn src-btn-link source-action-spaced" id="ov-btn-link-folder-archive" title="Link a local folder or archive to this wishlist item" style="display:none;">
+                                <i data-lucide="folder-plus"></i>
+                                <span>Link Folder / Archive</span>
+                            </button>
+                            <button type="button" class="src-action-btn src-btn-wrong source-action-spaced" id="ov-btn-mark-wrong" title="Clear current source data">
                                 <i data-lucide="alert-triangle"></i>
                                 <span>Clear Data</span>
                             </button>
-                            <button class="src-action-btn src-btn-wrong" id="ov-btn-ignore" title="Hide this game or mod from the library completely" style="margin-top:8px; background: rgba(220, 38, 38, 0.1); border-color: rgba(220, 38, 38, 0.3); color: #fca5a5;">
+                            <button type="button" class="src-action-btn src-btn-wrong source-action-spaced source-action-danger" id="ov-btn-ignore" title="Hide this game or mod from the library completely">
                                 <i data-lucide="eye-off"></i>
                                 <span>Ignore / Hide Game</span>
                             </button>
                         </div>
 
-                        <div class="source-link-form" id="ov-link-form" style="display:none;">
-                            <label class="link-form-label">Paste a DLsite, F95Zone, Itch.io, or Steam URL:</label>
-                            <div class="link-form-row">
-                                <input type="text" id="ov-link-url-input" class="input-dark" placeholder="https://f95zone.to/threads/12345/ or RJ01234567">
-                                <button class="btn-primary" id="ov-btn-submit-link">
-                                    <i data-lucide="check"></i>
-                                    <span>Link & Fetch</span>
-                                </button>
-                                <button class="btn-secondary" id="ov-btn-cancel-link">
-                                    <i data-lucide="x"></i>
-                                </button>
-                            </div>
-                            <div class="link-form-hint">
-                                Accepts: <span class="hint-tag">f95zone.to/threads/...</span> <span class="hint-tag">dlsite.com/.../RJ...</span> <span class="hint-tag">RJ01234567</span> <span class="hint-tag">*.itch.io/...</span> <span class="hint-tag">steampowered.com/app/...</span>
-                            </div>
-                        </div>
-
-                        <div class="source-link-form" id="ov-local-link-form" style="display:none;">
-                            <label class="link-form-label">Match this wishlist item to a scanned local entry:</label>
-                            <div class="link-form-stack">
-                                <input type="text" id="ov-local-link-search" class="input-dark" placeholder="Search local titles, raw folder names, or developers">
-                                <select id="ov-local-link-select" class="input-dark local-link-select" size="6"></select>
-                                <div class="link-form-row">
-                                    <button class="btn-primary" id="ov-btn-submit-local-link">
-                                        <i data-lucide="link-2"></i>
-                                        <span>Link Wishlist to Local Game</span>
-                                    </button>
-                                    <button class="btn-secondary" id="ov-btn-cancel-local-link">
-                                        <i data-lucide="x"></i>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="link-form-hint">
-                                Choose the scanned local game that should replace this wishlist item while keeping its notes, tags, and source metadata.
-                            </div>
-                        </div>
                     </div>
                 </div>
 
@@ -751,6 +1124,159 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <div class="source-modal-backdrop" id="local-path-choice-backdrop" style="display:none;"></div>
+    <div class="source-link-form source-modal-centered source-modal-sm" id="local-path-choice-modal" style="display:none;">
+        <div class="source-modal-header">
+            <h3 class="source-modal-title" id="local-path-choice-title">Link to Local Source</h3>
+            <button type="button" class="btn-secondary btn-icon-sm" id="btn-close-local-path-choice" title="Close">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 16px;">
+            <button type="button" class="btn-primary" id="btn-choice-pick-folder" style="justify-content: center; padding: 12px;">
+                <i data-lucide="folder"></i>
+                <span>Link Local Folder</span>
+            </button>
+            <button type="button" class="btn-secondary" id="btn-choice-pick-archive" style="justify-content: center; padding: 12px;">
+                <i data-lucide="archive"></i>
+                <span>Link Compressed Archive (.zip, .rar, .7z)</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="source-modal-backdrop" id="ov-source-modal-backdrop" style="display:none;"></div>
+    <div class="source-link-form source-modal-centered source-modal-lg source-modal-scroll source-modal-stack" id="ov-interactive-search-form" style="display:none;">
+        <div class="source-modal-header">
+            <h3 class="source-modal-title">
+                <i data-lucide="search" class="source-modal-title-icon"></i>
+                <span>Search Sources</span>
+            </h3>
+            <button type="button" class="btn-secondary btn-icon-sm" id="ov-btn-close-interactive-search" title="Close search">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="source-search-controls">
+            <div class="source-search-row">
+                <input type="text" id="ov-interactive-search-input" class="input-dark" style="flex:1;" placeholder="Search by title, creator, or folder name">
+                <button type="button" class="btn-primary" id="ov-btn-do-interactive-search">
+                    <i data-lucide="search"></i>
+                    <span>Search</span>
+                </button>
+            </div>
+            <div class="source-search-meta">
+                <div id="ov-interactive-search-platforms" style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" class="btn-secondary platform-chip active" data-platform="all">All</button>
+                    <button type="button" class="btn-secondary platform-chip" data-platform="f95zone">F95Zone</button>
+                    <button type="button" class="btn-secondary platform-chip" data-platform="dlsite">DLsite</button>
+                    <button type="button" class="btn-secondary platform-chip" data-platform="itch">Itch.io</button>
+                    <button type="button" class="btn-secondary platform-chip" data-platform="steam">Steam</button>
+                </div>
+                <div id="ov-interactive-search-status" class="link-form-hint source-search-status" style="display:none;"></div>
+            </div>
+        </div>
+        <div class="source-modal-results source-modal-results-tall" id="ov-interactive-search-results"></div>
+    </div>
+    <div class="source-link-form source-modal-centered source-modal-md source-modal-stack" id="ov-link-form" style="display:none;">
+        <div class="source-modal-header">
+            <h3 class="source-modal-title">
+                <i data-lucide="link" class="source-modal-title-icon"></i>
+                <span>Link Source URL</span>
+            </h3>
+            <button type="button" class="btn-secondary btn-icon-sm" id="ov-btn-close-link-form" title="Close link form">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <label class="link-form-label">Paste a DLsite, F95Zone, Itch.io, or Steam URL:</label>
+        <div class="link-form-row">
+            <input type="text" id="ov-link-url-input" class="input-dark" placeholder="https://f95zone.to/threads/12345/ or RJ01234567">
+            <button type="button" class="btn-primary" id="ov-btn-submit-link">
+                <i data-lucide="check"></i>
+                <span>Link & Fetch</span>
+            </button>
+            <button type="button" class="btn-secondary" id="ov-btn-cancel-link">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="link-form-hint">
+            Accepts: <span class="hint-tag">f95zone.to/threads/...</span> <span class="hint-tag">dlsite.com/.../RJ...</span> <span class="hint-tag">RJ01234567</span> <span class="hint-tag">*.itch.io/...</span> <span class="hint-tag">steampowered.com/app/...</span>
+        </div>
+    </div>
+    <div class="source-link-form source-modal-centered source-modal-md source-modal-stack" id="ov-local-link-form" style="display:none;">
+        <div class="source-modal-header">
+            <h3 class="source-modal-title">
+                <i data-lucide="folder-search" class="source-modal-title-icon"></i>
+                <span>Link Local Entry</span>
+            </h3>
+        </div>
+        <label class="link-form-label">Match this wishlist item to a scanned local entry:</label>
+        <div class="link-form-stack">
+            <input type="text" id="ov-local-link-search" class="input-dark" placeholder="Search local titles, raw folder names, or developers">
+            <select id="ov-local-link-select" class="input-dark local-link-select" size="6"></select>
+            <div class="link-form-row">
+                <button type="button" class="btn-primary" id="ov-btn-submit-local-link">
+                    <i data-lucide="link-2"></i>
+                    <span>Link Wishlist to Local Game</span>
+                </button>
+                <button type="button" class="btn-secondary" id="ov-btn-cancel-local-link">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+        </div>
+        <div class="link-form-hint">
+            Choose the scanned local game that should replace this wishlist item while keeping its notes, tags, and source metadata.
+        </div>
+    </div>
+    <div class="source-link-form source-modal-centered source-modal-lg source-modal-scroll source-modal-stack" id="ov-wishlist-modal" style="display:none;">
+        <div class="source-modal-header">
+            <h3 class="source-modal-title">
+                <i data-lucide="heart" class="source-modal-title-icon"></i>
+                <span>Add Wishlist Game</span>
+            </h3>
+            <button type="button" class="btn-secondary btn-icon-sm" id="wishlist-btn-close" title="Close wishlist">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="link-form-hint" style="margin-top: -6px;">
+            Paste a direct store/thread URL or search across all supported sources, then add the result straight into your wishlist.
+        </div>
+        <div class="link-form-label">Paste URL or Product Code</div>
+        <div class="link-form-row">
+            <input type="text" id="wishlist-url-input" class="input-dark" placeholder="https://f95zone.to/threads/... or RJ01234567 or https://store.steampowered.com/app/...">
+            <button type="button" class="btn-primary" id="wishlist-btn-add-url">
+                <i data-lucide="plus-circle"></i>
+                <span>Add by URL</span>
+            </button>
+        </div>
+        <div class="link-form-hint">
+            Accepts: <span class="hint-tag">f95zone.to/threads/...</span> <span class="hint-tag">dlsite.com/.../RJ...</span> <span class="hint-tag">RJ01234567</span> <span class="hint-tag">*.itch.io/...</span> <span class="hint-tag">steampowered.com/app/...</span>
+        </div>
+        <div class="link-form-label" style="margin-top: 2px;">Search Sources</div>
+        <div class="source-search-controls">
+            <div class="source-search-row">
+                <input type="text" id="wishlist-search-input" class="input-dark" style="flex:1;" placeholder="Search by title, creator, studio, or folder-style name">
+                <button type="button" class="btn-primary" id="wishlist-btn-do-search">
+                    <i data-lucide="search"></i>
+                    <span>Search</span>
+                </button>
+            </div>
+            <div class="source-search-meta">
+                <div id="wishlist-search-platforms" style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" class="btn-secondary platform-chip active" data-platform="all">All</button>
+                    <button type="button" class="btn-secondary platform-chip" data-platform="f95zone">F95Zone</button>
+                    <button type="button" class="btn-secondary platform-chip" data-platform="dlsite">DLsite</button>
+                    <button type="button" class="btn-secondary platform-chip" data-platform="itch">Itch.io</button>
+                    <button type="button" class="btn-secondary platform-chip" data-platform="steam">Steam</button>
+                </div>
+                <button type="button" class="btn-secondary" id="wishlist-btn-browser-search" style="align-self:flex-start;">
+                    <i data-lucide="external-link"></i>
+                    <span>Search in Browser</span>
+                </button>
+                <div id="wishlist-search-status" class="link-form-hint source-search-status" style="display:none;"></div>
+            </div>
+        </div>
+        <div class="source-modal-results source-modal-results-tall" id="wishlist-search-results"></div>
     </div>
 
     <script src="static/js/app.js?v=6"></script>

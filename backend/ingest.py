@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.database import SessionLocal, init_db, Game
 from backend.config import get_settings
 from backend.scanner import scan_games_directory
+from backend.source_map import find_source_map_entry, hydrate_game_from_source_snapshot
 
 CSV_PATH = Path("games_report.csv").resolve()
 
@@ -86,9 +87,16 @@ def run_ingestion(db: Session = None):
             raw = item["raw_name"]
             folder_path = item["folder_path"]
             scanned_paths.add(folder_path)
+            source_snapshot = find_source_map_entry(folder_path, raw, item["title"])
             
             # Look up link in CSV map, fallback to raw string (in case the folder name itself is an RJ code)
-            link_or_id = csv_map.get((cat, raw)) or csv_map.get(raw) or raw
+            link_or_id = (
+                (source_snapshot or {}).get("source_url")
+                or (source_snapshot or {}).get("source_id")
+                or csv_map.get((cat, raw))
+                or csv_map.get(raw)
+                or raw
+            )
             source_type, source_url, source_id = determine_source_info(link_or_id)
             
             is_identified = source_type != "unknown" and source_url is not None
@@ -130,13 +138,14 @@ def run_ingestion(db: Session = None):
                     game.source_url = source_url
                     game.source_id = source_id
                     game.is_identified = True
+                hydrate_game_from_source_snapshot(game, source_snapshot)
                 game.last_seen_at = scan_started_at
                 game.missing_scan_count = 0
                 updated_count += 1
             else:
                 # Create new
                 new_game = Game(
-                    title=item["title"],
+                    title=(source_snapshot or {}).get("title") or item["title"],
                     raw_name=raw,
                     category=cat,
                     folder_path=folder_path,
@@ -151,6 +160,7 @@ def run_ingestion(db: Session = None):
                     last_seen_at=scan_started_at,
                     missing_scan_count=0
                 )
+                hydrate_game_from_source_snapshot(new_game, source_snapshot)
                 db.add(new_game)
                 added_count += 1
                 
@@ -278,6 +288,34 @@ def deduplicate_games(db: Session) -> int:
                 removed += merged
                 removed_ids.add(dup.id)
     db.commit()
+    return removed
+
+def cleanup_redundant_wishlist_entries(db: Session, game: Game) -> int:
+    if not game or game.file_type == "wishlist":
+        return 0
+
+    matches_by_id = []
+    if game.source_id:
+        matches_by_id = db.query(Game).filter(
+            Game.source_id == game.source_id,
+            Game.file_type == "wishlist",
+        ).all()
+
+    matches_by_url = []
+    if game.source_url:
+        matches_by_url = db.query(Game).filter(
+            Game.source_url == game.source_url,
+            Game.file_type == "wishlist",
+        ).all()
+
+    removed = 0
+    seen_ids = set()
+    for duplicate in [*matches_by_id, *matches_by_url]:
+        if duplicate.id == game.id or duplicate.id in seen_ids:
+            continue
+        removed += merge_game_records(game, duplicate, db)
+        seen_ids.add(duplicate.id)
+
     return removed
 
 def merge_game_records(primary: Game, duplicate: Game, db: Session) -> int:

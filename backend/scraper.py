@@ -1,4 +1,4 @@
-﻿import re
+import re
 import json
 import urllib.request
 import urllib.parse
@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from backend.database import Game, Screenshot, Tag
+from backend.source_map import persist_game_snapshot
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -148,8 +149,9 @@ def scrape_dlsite(url: str, code: str) -> Dict[str, Any]:
         res['description'] = desc.get_text(separator=' ', strip=True)[:1000]
 
     shots = []
-    for img in soup.find_all('img'):
-        src = img.get('src') or img.get('data-src') or ''
+    media_nodes = list(soup.find_all('img')) + list(soup.find_all(attrs={'data-src': True}))
+    for node in media_nodes:
+        src = node.get('src') or node.get('data-src') or ''
         if src.startswith("//"):
             src = "https:" + src
         if '/modpub/images2/work/' in src and ('sample' in src or '_img_' in src):
@@ -320,15 +322,50 @@ def scrape_itch(url: str) -> Dict[str, Any]:
 
     return res
 
-def fetch_game_metadata(game: Game, db: Session, force_overwrite: bool = True) -> Game:
-    data = {}
-    if game.source_type == 'f95zone' or (game.source_url and 'f95zone.to' in game.source_url):
-        data = scrape_f95zone(game.source_url)
-    elif game.source_type == 'dlsite' or (game.source_id and str(game.source_id).upper().startswith(('RJ', 'VJ', 'BJ'))):
-        data = scrape_dlsite(game.source_url, game.source_id)
-    elif game.source_type == 'itch' or (game.source_url and '.itch.io' in game.source_url):
-        data = scrape_itch(game.source_url)
+def scrape_steam(url: str, app_id: Optional[str] = None) -> Dict[str, Any]:
+    res = {}
+    if not app_id and url:
+        m = re.search(r'/app/(\d+)', url)
+        if m:
+            app_id = m.group(1)
+    if not app_id:
+        return res
+    try:
+        api_url = f"https://store.steampowered.com/api/appdetails?appids={app_id}&l=english"
+        r = requests.get(api_url, headers=HEADERS, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if data and data.get(str(app_id), {}).get("success"):
+                info = data[str(app_id)].get("data", {})
+                if info.get("name"):
+                    res['title'] = info['name']
+                if info.get("header_image"):
+                    res['cover_url'] = info['header_image']
+                if info.get("developers"):
+                    res['developer'] = info['developers'][0]
+                if info.get("short_description"):
+                    clean_desc = BeautifulSoup(info['short_description'], 'html.parser').text.strip()
+                    res['description'] = clean_desc[:1000]
+                if info.get("screenshots"):
+                    res['screenshots'] = [s.get('path_full') for s in info['screenshots'] if s.get('path_full')][:15]
+                if info.get("genres"):
+                    res['tags'] = [g.get('description') for g in info['genres'] if g.get('description')][:10]
+    except Exception:
+        pass
+    return res
 
+def fetch_source_metadata(source_type: Optional[str], source_url: Optional[str], source_id: Optional[str]) -> Dict[str, Any]:
+    if source_type == 'f95zone' or (source_url and 'f95zone.to' in source_url):
+        return scrape_f95zone(source_url)
+    if source_type == 'dlsite' or (source_id and str(source_id).upper().startswith(('RJ', 'VJ', 'BJ'))):
+        return scrape_dlsite(source_url, source_id)
+    if source_type == 'itch' or (source_url and '.itch.io' in source_url):
+        return scrape_itch(source_url)
+    if source_type == 'steam' or (source_url and 'steampowered.com' in source_url):
+        return scrape_steam(source_url, source_id)
+    return {}
+
+def apply_metadata_to_game(game: Game, db: Session, data: Dict[str, Any], force_overwrite: bool = True) -> Game:
     if not data:
         return game
 
@@ -364,7 +401,12 @@ def fetch_game_metadata(game: Game, db: Session, force_overwrite: bool = True) -
     db.add(game)
     db.commit()
     db.refresh(game)
+    persist_game_snapshot(game)
     return game
+
+def fetch_game_metadata(game: Game, db: Session, force_overwrite: bool = True) -> Game:
+    data = fetch_source_metadata(game.source_type, game.source_url, game.source_id)
+    return apply_metadata_to_game(game, db, data, force_overwrite=force_overwrite)
 
 def fetch_all_missing_metadata(db: Session) -> int:
     games = db.query(Game).filter(Game.is_identified == True).all()
@@ -378,7 +420,7 @@ def fetch_all_missing_metadata(db: Session) -> int:
                 continue
     return count
 
-def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None) -> Dict[str, Any]:
+def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None, progress_callback = None) -> Dict[str, Any]:
     query = db.query(Game)
     if target_game_id:
         games = query.filter(Game.id == target_game_id).all()
@@ -387,7 +429,10 @@ def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None
 
     rematched = 0
     scraped = 0
-    for g in games:
+    total_games = len(games)
+    for index, g in enumerate(games, start=1):
+        if progress_callback:
+            progress_callback(index, total_games, g, "Searching sources and refreshing metadata...")
         # Protect existing valid metadata when running general refresh/rematch (not targeting a single game)
         if not target_game_id and g.is_identified and g.cover_url and g.title and not re.match(r'^[RVB]J\d{6,8}$', str(g.title), re.I):
             if len(g.screenshots) == 0:
@@ -411,6 +456,7 @@ def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None
             g.is_identified = True
             db.add(g)
             db.commit()
+            persist_game_snapshot(g)
             try:
                 fetch_game_metadata(g, db, force_overwrite=True)
                 scraped += 1
@@ -429,6 +475,7 @@ def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None
                 db.delete(s)
             db.add(g)
             db.commit()
+            persist_game_snapshot(g)
 
         # High-precision F95Zone rematching
         clean_title = re.sub(r'(\bv\d+.*|\b\d+b\b|rev\d+|fixed|ver\b.*|\b\d+\b|windows|edition|complete|deluxe|game|part|chapter|english|translated|archive|rar|zip|7z|\bv\d+\b).*', '', g.title or '', flags=re.IGNORECASE).strip()
@@ -439,7 +486,10 @@ def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None
             raw_clean = re.sub(r'(\bv\d+.*|\b\d+b\b|rev\d+|fixed|ver\b.*|\b\d+\b|windows|edition|complete|deluxe|game|part|chapter|english|translated|archive|rar|zip|7z|\bv\d+\b).*', '', g.raw_name, flags=re.IGNORECASE).strip()
             raw_clean = re.sub(r'[_\-\.\[\]\(\)\{\}]', ' ', raw_clean).strip()
 
-        combined_text = f"{clean_title} {raw_clean}"
+        if target_game_id or (clean_title and len(clean_title) >= 3):
+            combined_text = clean_title if clean_title else raw_clean
+        else:
+            combined_text = f"{clean_title} {raw_clean}".strip()
         words = []
         for w in combined_text.split():
             w_clean = w.strip()
@@ -502,6 +552,7 @@ def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None
             g.is_identified = True
             db.add(g)
             db.commit()
+            persist_game_snapshot(g)
             rematched += 1
 
             try:
@@ -517,13 +568,16 @@ def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None
                 except Exception:
                     pass
 
-    return {"message": f"Successfully rematched {rematched} games and updated metadata for {scraped} titles.", "rematched": rematched, "scraped": scraped}
+    return {"message": f"Successfully rematched {rematched} games and updated metadata for {scraped} titles.", "rematched": rematched, "scraped": scraped, "total": total_games}
 
-def fix_all_titles_and_metadata(db: Session) -> Dict[str, Any]:
+def fix_all_titles_and_metadata(db: Session, progress_callback = None) -> Dict[str, Any]:
     games = db.query(Game).all()
     updated = 0
     rematched = 0
-    for g in games:
+    total_games = len(games)
+    for index, g in enumerate(games, start=1):
+        if progress_callback:
+            progress_callback(index, total_games, g, "Cleaning titles and refreshing metadata...")
         if g.title:
             clean_t = re.sub(r'\[[^\]]*\]|\([^\)]*\)', ' ', str(g.title)).strip()
             clean_t = re.sub(r'^(Completed|VN|RPGM|Unity|3D|2D|Flash|HTML|In Development|On Hold|Abandoned|Collection|Mod|Cheat)\s*[\-\:]\s*', '', clean_t, flags=re.IGNORECASE).strip()
@@ -533,6 +587,7 @@ def fix_all_titles_and_metadata(db: Session) -> Dict[str, Any]:
                 g.title = clean_t
                 db.add(g)
                 db.commit()
+                persist_game_snapshot(g)
 
         if g.is_identified and (g.source_url or g.source_id):
             try:
@@ -547,6 +602,293 @@ def fix_all_titles_and_metadata(db: Session) -> Dict[str, Any]:
                     rematched += 1
             except Exception:
                 continue
-    return {"message": f"Fixed titles and refetched covers/screenshots for {updated} identified games and rematched {rematched} games.", "updated": updated, "rematched": rematched}
+    return {"message": f"Fixed titles and refetched covers/screenshots for {updated} identified games and rematched {rematched} games.", "updated": updated, "rematched": rematched, "total": total_games}
 
+def search_f95zone(query: str) -> List[Dict[str, Any]]:
+    if not query or len(query.strip()) < 2:
+        return []
+    try:
+        r = requests.get(f"https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games&search={urllib.parse.quote(query.strip())}", headers=HEADERS, timeout=10)
+        data_list = r.json().get('msg', {}).get('data', [])
+        results = []
+        if isinstance(data_list, list):
+            for item in data_list[:15]:
+                results.append({
+                    "source_type": "f95zone",
+                    "source_id": str(item.get('thread_id', '')),
+                    "title": item.get('title', 'Unknown Title'),
+                    "version": item.get('version', ''),
+                    "creator": item.get('creator', 'Unknown Developer'),
+                    "cover": item.get('cover', ''),
+                    "url": f"https://f95zone.to/threads/{item.get('thread_id')}/" if item.get('thread_id') else ""
+                })
+        return results
+    except Exception:
+        return []
 
+def search_dlsite(query: str) -> List[Dict[str, Any]]:
+    if not query or len(query.strip()) < 2:
+        return []
+    results = []
+    clean_q = query.strip()
+    if re.match(r'^[RVB]J\d{6,8}$', clean_q, re.I):
+        code = clean_q.upper()
+        res = scrape_dlsite("", code)
+        if res and res.get("title"):
+            results.append({
+                "source_type": "dlsite",
+                "source_id": code,
+                "title": res.get("title", code),
+                "version": res.get("latest_version", ""),
+                "creator": res.get("developer", "Unknown Maker"),
+                "cover": res.get("cover_url", ""),
+                "url": f"https://www.dlsite.com/maniax/work/=/product_id/{code}.html"
+            })
+            return results
+    try:
+        url = f"https://www.dlsite.com/maniax/fsr/=/language/jp/keyword/{urllib.parse.quote(clean_q)}"
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for item in soup.find_all('tr', class_=re.compile(r'search_result_img|work_list_item')) or soup.find_all('li', class_=re.compile(r'search_result_img|work_list_item')) or soup.find_all('dl', class_='work_img_main'):
+                a_tag = item.find('a', href=re.compile(r'/product_id/([RVB]J\d{6,8})\.html'))
+                if not a_tag:
+                    continue
+                href = a_tag.get('href', '')
+                m = re.search(r'([RVB]J\d{6,8})', href, re.I)
+                if not m:
+                    continue
+                code = m.group(1).upper()
+                if any(r["source_id"] == code for r in results):
+                    continue
+                
+                title_el = item.find('dd', class_='work_name') or item.find('dt', class_='work_name') or a_tag
+                title_str = title_el.text.strip() if title_el else code
+                
+                maker_el = item.find('dd', class_='maker_name') or item.find('span', class_='maker_name')
+                maker_str = maker_el.text.strip() if maker_el else "Unknown Maker"
+                
+                img_el = item.find('img')
+                cover_str = ""
+                if img_el:
+                    cover_str = img_el.get('src') or img_el.get('data-src') or ""
+                    if cover_str.startswith("//"):
+                        cover_str = "https:" + cover_str
+                
+                results.append({
+                    "source_type": "dlsite",
+                    "source_id": code,
+                    "title": title_str,
+                    "version": "",
+                    "creator": maker_str,
+                    "cover": cover_str,
+                    "url": f"https://www.dlsite.com/maniax/work/=/product_id/{code}.html" if not href.startswith("http") else href
+                })
+                if len(results) >= 15:
+                    break
+    except Exception:
+        pass
+    return results
+
+def _itch_result_key(item: Dict[str, Any]) -> str:
+    return (item.get("url") or item.get("source_id") or item.get("title") or "").rstrip("/").lower()
+
+def _is_itch_project_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.netloc or "").lower()
+    if not host.endswith(".itch.io"):
+        return False
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    return len(segments) == 1
+
+def _query_matches_itch_result(query: str, title: str, creator: str, url: str) -> bool:
+    needle = (query or "").strip().lower()
+    if not needle:
+        return False
+    haystack = f"{title or ''} {creator or ''} {url or ''}".lower()
+    if needle in haystack:
+        return True
+    tokens = [token for token in re.split(r"[^a-z0-9]+", needle) if len(token) >= 3]
+    return bool(tokens) and any(token in haystack for token in tokens)
+
+def _rank_itch_result(query: str, item: Dict[str, Any]) -> tuple[int, int, str]:
+    needle = (query or "").strip().lower()
+    title = (item.get("title") or "").strip().lower()
+    creator = (item.get("creator") or "").strip().lower()
+    url = (item.get("url") or "").strip().lower()
+
+    score = 0
+    if needle:
+        if title == needle:
+            score += 120
+        elif title.startswith(needle):
+            score += 90
+        elif needle in title:
+            score += 70
+        elif needle in creator:
+            score += 20
+        elif needle in url:
+            score += 15
+
+        tokens = [token for token in re.split(r"[^a-z0-9]+", needle) if len(token) >= 3]
+        score += sum(10 for token in tokens if token in title)
+        score += sum(3 for token in tokens if token in creator)
+
+    if item.get("cover"):
+        score += 5
+    if item.get("creator") and item.get("creator") != "Unknown Developer":
+        score += 2
+
+    return (-score, len(title), title or url)
+
+def _search_itch_store(query: str) -> List[Dict[str, Any]]:
+    if not query or len(query.strip()) < 2:
+        return []
+    results = []
+    try:
+        url = f"https://itch.io/search?q={urllib.parse.quote(query.strip())}"
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for cell in soup.find_all('div', class_='game_cell'):
+                title_a = cell.find('a', class_='title')
+                if not title_a:
+                    continue
+                href = title_a.get('href', '')
+                title_str = title_a.text.strip()
+                
+                author_el = cell.find('div', class_='game_author')
+                author_str = author_el.text.strip() if author_el else "Unknown Developer"
+                if author_str.startswith("by "):
+                    author_str = author_str[3:].strip()
+                
+                img_el = cell.find('img')
+                cover_str = ""
+                if img_el:
+                    cover_str = img_el.get('data-lazy_src') or img_el.get('src') or ""
+                
+                sid = href.replace("https://", "").replace("http://", "").strip("/")
+                
+                results.append({
+                    "source_type": "itch",
+                    "source_id": sid,
+                    "title": title_str,
+                    "version": "",
+                    "creator": author_str,
+                    "cover": cover_str,
+                    "url": href
+                })
+                if len(results) >= 15:
+                    break
+    except Exception:
+        pass
+    return results
+
+def _search_itch_site_fallback(query: str) -> List[Dict[str, Any]]:
+    if not query or len(query.strip()) < 2:
+        return []
+    results = []
+    try:
+        ddg_query = urllib.parse.quote(f"site:itch.io {query.strip()}")
+        url = f"https://html.duckduckgo.com/html/?q={ddg_query}"
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code != 200:
+            return results
+
+        soup = BeautifulSoup(r.text, 'html.parser')
+        for anchor in soup.select('a.result__a'):
+            href = anchor.get('href', '').strip()
+            if href.startswith('//'):
+                href = f"https:{href}"
+
+            parsed = urllib.parse.urlparse(href)
+            if 'duckduckgo.com' in (parsed.netloc or '').lower():
+                target = urllib.parse.parse_qs(parsed.query).get('uddg', [''])[0]
+                if target:
+                    href = urllib.parse.unquote(target)
+
+            href = href.split('?')[0].split('#')[0]
+            title_str = anchor.get_text(" ", strip=True)
+            if not _is_itch_project_url(href):
+                continue
+            if not _query_matches_itch_result(query, title_str, "", href):
+                continue
+
+            sid = href.replace("https://", "").replace("http://", "").strip("/")
+            results.append({
+                "source_type": "itch",
+                "source_id": sid,
+                "title": title_str,
+                "version": "",
+                "creator": "Unknown Developer",
+                "cover": "",
+                "url": href
+            })
+            if len(results) >= 15:
+                break
+    except Exception:
+        pass
+    return results
+
+def search_itch(query: str) -> List[Dict[str, Any]]:
+    store_results = _search_itch_store(query)
+    fallback_results = _search_itch_site_fallback(query)
+
+    merged: List[Dict[str, Any]] = []
+    seen = set()
+    for item in store_results + fallback_results:
+        key = _itch_result_key(item)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+
+    merged.sort(key=lambda item: _rank_itch_result(query, item))
+    return merged[:15]
+
+def search_steam(query: str) -> List[Dict[str, Any]]:
+    if not query or len(query.strip()) < 2:
+        return []
+    results = []
+    try:
+        url = f"https://store.steampowered.com/api/storesearch/?term={urllib.parse.quote(query.strip())}&l=english&cc=US"
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            for item in data.get("items", [])[:15]:
+                app_id = str(item.get("id", ""))
+                if not app_id:
+                    continue
+                title_str = item.get("name", "Unknown Title")
+                cover_str = f"https://cdn.akamai.steamstatic.com/steam/apps/{app_id}/header.jpg"
+                
+                results.append({
+                    "source_type": "steam",
+                    "source_id": app_id,
+                    "title": title_str,
+                    "version": "",
+                    "creator": "Steam App",
+                    "cover": cover_str,
+                    "url": f"https://store.steampowered.com/app/{app_id}/"
+                })
+    except Exception:
+        pass
+    return results
+
+def search_all_sources(query: str, platform: str = "all") -> Dict[str, Any]:
+    plat = (platform or "all").lower().strip()
+    results = []
+    if plat in ("all", "f95zone"):
+        results.extend(search_f95zone(query))
+    if plat in ("all", "dlsite"):
+        results.extend(search_dlsite(query))
+    if plat in ("all", "itch"):
+        results.extend(search_itch(query))
+    if plat in ("all", "steam"):
+        results.extend(search_steam(query))
+    return {"results": results, "query": query, "platform": plat}

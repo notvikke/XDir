@@ -1,9 +1,10 @@
 import os
 import json
 from pathlib import Path
-from backend.runtime import get_app_root
+from backend.runtime import get_data_root, migrate_legacy_data_file
 
-SETTINGS_FILE = os.path.join(get_app_root(), "backend", "settings.json")
+SETTINGS_FILE = os.path.join(get_data_root(), "settings.json")
+migrate_legacy_data_file(os.path.join("backend", "settings.json"), SETTINGS_FILE)
 
 def get_default_games_dir() -> str:
     if os.path.exists(r"D:\Game setups"):

@@ -11,11 +11,22 @@ venv/
 env/
 
 cache/
+data/
 backend/library.db
+*.db-wal
+*.db-shm
 backend/settings.json
 xlibrary.db
 startup_error.log
 *.log
+recovery/
+backend/*.before_restore_backup
+diff_recovery.txt
+full_diff.txt
+search_form_rec.txt
+step45.txt
+step47.txt
+workflow_recovery.txt
 
 games_report.csv
 games_list.txt

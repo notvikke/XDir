@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 set "DIST_DIR=%CD%\dist"
 set "APP_DIR=%DIST_DIR%\XDir"
-set "ZIP_PATH=%DIST_DIR%\XDir-0.1.1-windows.zip"
+set "ZIP_PATH=%DIST_DIR%\XDir-0.2.0-windows.zip"
 
 set "PYTHON_CMD="
 if defined PYTHON_EXE if exist "%PYTHON_EXE%" set "PYTHON_CMD=%PYTHON_EXE%"
@@ -30,9 +30,12 @@ if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
 call %PYTHON_CMD% -m PyInstaller --noconfirm --clean XDir.spec
 if errorlevel 1 exit /b %errorlevel%
 
-if exist "%APP_DIR%\cache" rmdir /s /q "%APP_DIR%\cache"
-if exist "%APP_DIR%\backend\library.db" del /f /q "%APP_DIR%\backend\library.db"
-if exist "%APP_DIR%\backend\settings.json" del /f /q "%APP_DIR%\backend\settings.json"
+if exist "%APP_DIR%\data\cache" rmdir /s /q "%APP_DIR%\data\cache"
+if exist "%APP_DIR%\data\library.db" del /f /q "%APP_DIR%\data\library.db"
+if exist "%APP_DIR%\data\library.db-wal" del /f /q "%APP_DIR%\data\library.db-wal"
+if exist "%APP_DIR%\data\library.db-shm" del /f /q "%APP_DIR%\data\library.db-shm"
+if exist "%APP_DIR%\data\settings.json" del /f /q "%APP_DIR%\data\settings.json"
+if exist "%APP_DIR%\data\source-map.json" del /f /q "%APP_DIR%\data\source-map.json"
 
 powershell -NoProfile -Command "Compress-Archive -Path '%APP_DIR%\*' -DestinationPath '%ZIP_PATH%' -Force"
 if errorlevel 1 exit /b %errorlevel%

@@ -4,7 +4,7 @@ XDir is a Windows desktop library manager for locally stored games and archives.
 
 ## Status
 
-This is a first public release build for Windows. The app is usable, but it is still early-stage software and should be treated as a local desktop utility rather than a polished cross-platform product.
+This is an early-stage Windows release build. The app is usable, but it should still be treated as a local desktop utility rather than a polished cross-platform product.
 
 ## Features
 
@@ -95,6 +95,7 @@ Release-critical regression checks live in `tests/` and can be run with Node:
 node tests/frontend-regressions.mjs
 node tests/backend-regressions.mjs
 node tests/app-upgrade-regressions.mjs
+python -m unittest tests.test_smart_scan tests.test_scraper -v
 ```
 
 ## License

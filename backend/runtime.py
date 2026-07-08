@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 
 
@@ -15,3 +16,25 @@ def get_bundle_root() -> str:
             return os.path.abspath(meipass)
         return get_app_root()
     return get_app_root()
+
+
+def get_data_root() -> str:
+    data_root = os.path.join(get_app_root(), "data")
+    os.makedirs(data_root, exist_ok=True)
+    return data_root
+
+
+def migrate_legacy_data_file(legacy_relative_path: str, target_path: str) -> None:
+    legacy_path = os.path.join(get_app_root(), legacy_relative_path)
+    if not os.path.exists(legacy_path) or os.path.exists(target_path):
+        return
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    shutil.copy2(legacy_path, target_path)
+
+
+def migrate_legacy_data_directory(legacy_relative_path: str, target_path: str) -> None:
+    legacy_path = os.path.join(get_app_root(), legacy_relative_path)
+    if not os.path.isdir(legacy_path) or os.path.exists(target_path):
+        return
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    shutil.copytree(legacy_path, target_path)

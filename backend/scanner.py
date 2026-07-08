@@ -130,6 +130,28 @@ def scan_games_directory(root_path: Optional[Path] = None) -> List[Dict[str, Any
 
     return results
 
+def scan_single_game_path(selected_path: str) -> Optional[Dict[str, Any]]:
+    if not selected_path:
+        return None
+
+    item_path = Path(selected_path).expanduser()
+    if not item_path.exists():
+        return None
+
+    if item_path.is_file() and not item_path.name.lower().endswith(('.zip', '.rar', '.7z', '.iso', '.exe')):
+        return None
+
+    try:
+        games_root = get_games_dir().resolve()
+    except Exception:
+        games_root = None
+
+    category = item_path.parent.name or "Manual"
+    if games_root and item_path.parent == games_root:
+        category = games_root.name
+
+    return _create_entry(category, item_path)
+
 def _create_entry(category: str, item_path: Path) -> Dict[str, Any]:
     name = item_path.name
     cleaned_info = clean_name(name)

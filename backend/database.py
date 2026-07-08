@@ -1,17 +1,31 @@
 import os
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, ForeignKey, create_engine, text
+from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, ForeignKey, create_engine, text, event
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
-from backend.runtime import get_app_root
+from backend.runtime import get_data_root, migrate_legacy_data_file
 
-DB_PATH = os.path.join(get_app_root(), "backend", "library.db")
+DB_PATH = os.path.join(get_data_root(), "library.db")
+migrate_legacy_data_file(os.path.join("backend", "library.db"), DB_PATH)
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA cache_size=-64000")
+    except Exception:
+        pass
+    finally:
+        cursor.close()
 
 Base = declarative_base()
 
@@ -46,21 +60,22 @@ class Game(Base):
     description = Column(Text, nullable=True)
     
     # User status & tracking (XLibrary style)
-    playing_progress = Column(String, default="unplayed")  # "unplayed", "playing", "completed", "on_hold"
+    playing_progress = Column(String, default="unplayed", index=True)  # "unplayed", "playing", "completed", "on_hold"
     user_score = Column(String, nullable=True)  # user star rating
-    is_ignored = Column(Boolean, default=False)
+    is_ignored = Column(Boolean, default=False, index=True)
     missing_scan_count = Column(Integer, default=0)
     
     # Timestamps
-    added_at = Column(DateTime, default=datetime.utcnow)
+    added_at = Column(DateTime, default=datetime.utcnow, index=True)
     last_played = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    screenshots = relationship("Screenshot", back_populates="game", cascade="all, delete-orphan")
-    tags = relationship("Tag", back_populates="game", cascade="all, delete-orphan")
-    custom_tags = relationship("CustomTag", back_populates="game", cascade="all, delete-orphan")
-    journal_entries = relationship("JournalEntry", back_populates="game", cascade="all, delete-orphan")
+    sources = relationship("GameSource", back_populates="game", cascade="all, delete-orphan", lazy="selectin")
+    screenshots = relationship("Screenshot", back_populates="game", cascade="all, delete-orphan", lazy="selectin")
+    tags = relationship("Tag", back_populates="game", cascade="all, delete-orphan", lazy="selectin")
+    custom_tags = relationship("CustomTag", back_populates="game", cascade="all, delete-orphan", lazy="selectin")
+    journal_entries = relationship("JournalEntry", back_populates="game", cascade="all, delete-orphan", lazy="selectin")
     
     def to_dict(self):
         return {
@@ -91,6 +106,7 @@ class Game(Base):
             "added_at": self.added_at.isoformat() if self.added_at else None,
             "last_played": self.last_played.isoformat() if self.last_played else None,
             "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
+            "sources": [s.to_dict() for s in self.sources],
             "screenshots": [s.url for s in self.screenshots],
             "tags": [t.tag_name for t in self.tags],
             "custom_tags": [ct.tag_name for ct in self.custom_tags],
@@ -135,6 +151,33 @@ class JournalEntry(Base):
 
     game = relationship("Game", back_populates="journal_entries")
 
+class GameSource(Base):
+    __tablename__ = "game_sources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id", ondelete="CASCADE"), nullable=False)
+    source_type = Column(String, nullable=False, index=True)  # "f95zone", "dlsite", "itch", "steam"
+    source_url = Column(String, nullable=False)
+    source_id = Column(String, nullable=True)
+    title_reported = Column(String, nullable=True)
+    version_reported = Column(String, nullable=True)
+    is_preferred = Column(Boolean, default=False)
+    added_at = Column(DateTime, default=datetime.utcnow)
+
+    game = relationship("Game", back_populates="sources")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "source_type": self.source_type,
+            "source_url": self.source_url,
+            "source_id": self.source_id,
+            "title_reported": self.title_reported,
+            "version_reported": self.version_reported,
+            "is_preferred": self.is_preferred,
+            "added_at": self.added_at.isoformat() if self.added_at else None
+        }
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     # Lightweight migration for existing SQLite databases
@@ -160,7 +203,32 @@ def init_db():
             conn.execute(text("UPDATE games SET last_seen_at = COALESCE(last_seen_at, added_at, CURRENT_TIMESTAMP)"))
         except Exception:
             pass
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_playing_progress ON games (playing_progress)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_is_ignored ON games (is_ignored)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_added_at ON games (added_at)"))
+        except Exception:
+            pass
         conn.commit()
+
+    # Backfill game_sources for already identified games
+    with SessionLocal() as db_session:
+        try:
+            identified_games = db_session.query(Game).filter(Game.is_identified == True, Game.source_type != "unknown", Game.source_url != None).all()
+            for g in identified_games:
+                if not g.sources:
+                    db_session.add(GameSource(
+                        game_id=g.id,
+                        source_type=g.source_type,
+                        source_url=g.source_url,
+                        source_id=g.source_id,
+                        title_reported=g.title,
+                        version_reported=g.latest_version,
+                        is_preferred=True
+                    ))
+            db_session.commit()
+        except Exception:
+            db_session.rollback()
 
 def get_db():
     db = SessionLocal()

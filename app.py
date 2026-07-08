@@ -6,7 +6,7 @@ import threading
 import ctypes
 import urllib.request
 
-from backend.runtime import get_app_root, get_bundle_root
+from backend.runtime import get_app_root, get_bundle_root, get_data_root, migrate_legacy_data_directory
 
 # Fix for pythonw where stdout/stderr are None
 if sys.stdout is None:
@@ -21,6 +21,7 @@ APP_USER_MODEL_ID = "XDir.Library"
 APP_ICON_RELATIVE_PATH = os.path.join("extension", "icon128.png")
 APP_ROOT = get_app_root()
 BUNDLE_ROOT = get_bundle_root()
+DATA_ROOT = get_data_root()
 APP_ICON_PATH = os.path.join(BUNDLE_ROOT, APP_ICON_RELATIVE_PATH)
 SERVER_READY_TIMEOUT_SECONDS = 45.0
 _webview_module = None
@@ -327,6 +328,7 @@ def main():
             sys.exit(0)
 
     webview = load_webview_module()
+    webview.settings['DRAG_REGION_DIRECT_TARGET_ONLY'] = True
             
     class WindowApi:
         def minimize(self):
@@ -362,6 +364,85 @@ def main():
                 if res and len(res) > 0:
                     return res[0]
             return None
+        def browse_local_game_file(self, initial_dir=None):
+            if len(webview.windows) > 0:
+                res = webview.windows[0].create_file_dialog(webview.OPEN_DIALOG,
+                    directory=initial_dir or "",
+                    allow_multiple=False,
+                    file_types=(
+                        'Game Files (*.zip;*.rar;*.7z;*.iso;*.exe)',
+                        'All Files (*.*)',
+                    ),
+                )
+                if res and len(res) > 0:
+                    return res[0]
+            return None
+        def open_external_url(self, url):
+            if not url:
+                return False
+            try:
+                os.startfile(url)
+                return True
+            except Exception:
+                return False
+        def start_resize(self, edge):
+            import ctypes
+
+            resize_map = {
+                "left": 1,
+                "right": 2,
+                "top": 3,
+                "top-left": 4,
+                "top-right": 5,
+                "bottom": 6,
+                "bottom-left": 7,
+                "bottom-right": 8,
+            }
+            resize_code = resize_map.get(str(edge or "").lower())
+            if not resize_code or len(webview.windows) == 0:
+                return False
+
+            w = webview.windows[0]
+            if not getattr(w, "resizable", True):
+                return False
+
+            try:
+                import clr
+                clr.AddReference('System.Windows.Forms')
+                import System.Windows.Forms as WinForms
+                from System import Action
+
+                def _resize():
+                    try:
+                        if getattr(w.gui, 'WindowState', None) == WinForms.FormWindowState.Maximized:
+                            return
+                    except Exception:
+                        pass
+                    try:
+                        hwnd = w.gui.Handle.ToInt32()
+                        ctypes.windll.user32.ReleaseCapture()
+                        ctypes.windll.user32.SendMessageW(hwnd, 0x0112, 0xF000 + resize_code, 0)
+                    except Exception:
+                        pass
+
+                if getattr(w, 'gui', None):
+                    w.gui.Invoke(Action(_resize))
+                    return True
+            except Exception:
+                pass
+
+            try:
+                hwnd = ctypes.windll.user32.GetForegroundWindow()
+                if not hwnd:
+                    hwnd = ctypes.windll.user32.FindWindowW(None, "XDir - Offline Game Manager")
+                if hwnd:
+                    ctypes.windll.user32.ReleaseCapture()
+                    ctypes.windll.user32.SendMessageW(hwnd, 0x0112, 0xF000 + resize_code, 0)
+                    return True
+            except Exception:
+                pass
+
+            return False
         def start_drag(self):
             import ctypes
             if len(webview.windows) > 0:
@@ -397,10 +478,12 @@ def main():
         html=STARTUP_SPLASH_HTML,
         width=1400,
         height=900,
+        resizable=True,
         min_size=(1000, 600),
         background_color="#0b0c10",
         frameless=True,
-        easy_drag=True,
+        easy_drag=False,
+        shadow=True,
         js_api=WindowApi()
     )
     
@@ -409,8 +492,9 @@ def main():
         
     window.events.loaded += on_loaded
     
-    # Store all webview cache/data locally in the app directory so it doesn't touch the C drive
-    local_cache_dir = os.path.join(APP_ROOT, "cache")
+    # Store all webview cache/data in portable app data so updates do not wipe it.
+    local_cache_dir = os.path.join(DATA_ROOT, "cache")
+    migrate_legacy_data_directory("cache", local_cache_dir)
     os.makedirs(local_cache_dir, exist_ok=True)
     
     webview.start(bootstrap_window, window, private_mode=False, storage_path=local_cache_dir)
