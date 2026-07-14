@@ -383,8 +383,8 @@ def apply_metadata_to_game(game: Game, db: Session, data: Dict[str, Any], force_
             game.title = data['title']
     if data.get('latest_version'):
         game.latest_version = data['latest_version']
-        if game.local_version and game.latest_version != game.local_version:
-            game.update_available = True
+        from backend.update_checks import derive_update_status
+        game.update_status, game.update_available = derive_update_status(game.local_version, game.latest_version)
 
     if data.get('screenshots'):
         for s in list(game.screenshots):

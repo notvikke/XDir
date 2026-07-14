@@ -24,6 +24,9 @@ def get_settings() -> dict:
         "startup_scan": True,
         "missing_grace_scans": 3,
         "auto_update": True,
+        "automatic_update_checks": True,
+        "update_check_interval_days": 7,
+        "last_update_check_at": None,
         "preferred_source": "f95zone",
     }
     if os.path.exists(SETTINGS_FILE):

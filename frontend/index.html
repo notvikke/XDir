@@ -192,19 +192,23 @@
                                 <option value="rating">Rating Score</option>
                             </select>
                             <div class="scan-toolbar-progress" id="scan-toolbar-progress" hidden>
-                                <button type="button" class="scan-toolbar-progress-button" id="btn-open-smart-scan-progress" title="View smart scan progress">
+                                <button type="button" class="scan-toolbar-progress-button" id="btn-open-smart-scan-progress" title="View active library job" aria-label="View active library job progress">
                                     <div class="scan-toolbar-progress-meta">
-                                        <span id="scan-toolbar-progress-label">Smart scan running</span>
+                                        <span id="scan-toolbar-progress-label">Library job running</span>
                                         <span id="scan-toolbar-progress-count">0 / 0</span>
                                     </div>
                                     <div class="scan-toolbar-progress-track">
                                         <div class="scan-toolbar-progress-fill" id="scan-toolbar-progress-fill" style="width: 0%;"></div>
                                     </div>
                                 </button>
-                                <button type="button" class="btn-secondary btn-icon-sm scan-toolbar-cancel" id="btn-cancel-smart-scan-toolbar" title="Cancel smart scan">
+                                <button type="button" class="btn-secondary btn-icon-sm scan-toolbar-cancel" id="btn-cancel-smart-scan-toolbar" title="Cancel active job" aria-label="Cancel active library job">
                                     <i data-lucide="x"></i>
                                 </button>
                             </div>
+                            <button class="btn-secondary" id="btn-refresh-metadata" type="button" title="Refetch metadata for games that already have a linked source">
+                                <i data-lucide="refresh-cw"></i>
+                                <span>Refresh Metadata</span>
+                            </button>
                             <button class="btn-primary" id="btn-add-game">
                                 <i data-lucide="plus"></i>
                                 <span>Scan Directory</span>
@@ -290,353 +294,62 @@
 
         <!-- TAB 3: SETTINGS VIEW -->
         <main class="view-panel" id="view-settings">
-            <div class="settings-layout">
-                <aside class="settings-sidebar">
-                    <div class="settings-nav-header">
-                        <h3>Settings sections</h3>
-                        <span>Configure real XDir capabilities, not placeholder toggles.</span>
-                    </div>
+            <div class="settings-layout settings-preferences" id="settings-view">
+                <aside class="settings-sidebar" aria-label="Settings sections">
+                    <div class="settings-nav-header"><h3>Settings</h3><span>Preferences, integrations, and advanced maintenance.</span></div>
                     <div class="settings-nav-list">
-                        <button class="settings-nav-item active" data-section="defaults">
-                            <i data-lucide="folder-cog"></i>
-                            <div class="set-text">
-                                <h4>Library Defaults</h4>
-                                <span>Directory, startup, archive, retention</span>
-                            </div>
-                        </button>
-                        <button class="settings-nav-item" data-section="sources">
-                            <i data-lucide="radar"></i>
-                            <div class="set-text">
-                                <h4>Sources & Matching</h4>
-                                <span>Preferred source strategy and coverage</span>
-                            </div>
-                        </button>
-                        <button class="settings-nav-item" data-section="maintenance">
-                            <i data-lucide="shield-check"></i>
-                            <div class="set-text">
-                                <h4>Maintenance & Repair</h4>
-                                <span>Scan flows, metadata repair, resets</span>
-                            </div>
-                        </button>
-                        <button class="settings-nav-item" data-section="companion">
-                            <i data-lucide="plug-zap"></i>
-                            <div class="set-text">
-                                <h4>Companion & Queue</h4>
-                                <span>Chrome bridge health and metadata queue</span>
-                            </div>
-                        </button>
+                        <button class="settings-nav-item active" data-section="library"><i data-lucide="folder-cog"></i><div class="set-text"><h4>Library</h4><span>Directory and discovery behavior</span></div></button>
+                        <button class="settings-nav-item" data-section="sources-updates"><i data-lucide="refresh-cw"></i><div class="set-text"><h4>Sources &amp; Updates</h4><span>Providers and automatic checks</span></div></button>
+                        <button class="settings-nav-item" data-section="companion"><i data-lucide="plug-zap"></i><div class="set-text"><h4>Companion</h4><span>Extension connection state</span></div></button>
+                        <button class="settings-nav-item" data-section="advanced"><i data-lucide="wrench"></i><div class="set-text"><h4>Advanced</h4><span>Repair and destructive tools</span></div></button>
                     </div>
                 </aside>
 
                 <section class="settings-content">
-                    <div class="settings-hero">
-                        <div class="settings-hero-copy">
-                            <span class="settings-eyebrow">Preferences & Operations</span>
-                            <h2>Align XDir with how you discover, match, and maintain your library.</h2>
-                            <p>Everything on this page maps to live functionality today: local scans, source-aware metadata recovery, repair jobs, and Chrome companion health.</p>
+                    <header class="settings-titlebar">
+                        <div><span class="settings-eyebrow">Application preferences</span><h2>Settings</h2><p>Change persistent behavior without running library work.</p></div>
+                        <div class="settings-save-cluster"><span class="settings-save-status" id="settings-save-status" role="status">Saved</span><button class="btn-primary" id="btn-save-preferences" disabled><i data-lucide="save"></i><span>Save</span></button></div>
+                    </header>
+
+                    <section class="set-panel active" id="set-library">
+                        <div class="settings-section-head" id="settings-library"><h3>Library</h3><p>Choose where games live and how local discovery behaves.</p></div>
+                        <div class="settings-form-card">
+                            <div class="settings-field-row settings-field-row-stack"><div><label for="setting-games-dir">Primary library directory</label><p>Normal Scan discovers folders, archives, and executables from this location.</p></div><div class="settings-browse-row"><input type="text" id="setting-games-dir" class="input-dark" placeholder="C:\Games"><button type="button" class="btn-secondary" id="btn-browse-dir">Browse</button></div></div>
+                            <div class="settings-field-row"><div><label for="toggle-startup-scan">Scan library at startup</label><p>Look for local additions when XDir opens.</p></div><label class="switch"><input type="checkbox" id="toggle-startup-scan"><span class="slider round"></span></label></div>
+                            <div class="settings-field-row"><div><label for="setting-missing-grace-scans">Missing-entry grace scans</label><p>Consecutive misses allowed before hiding a local entry.</p></div><input type="number" min="1" max="10" id="setting-missing-grace-scans" class="input-dark input-compact"></div>
+                            <div class="settings-field-row"><div><label for="set-launch-archive-mode">Archive launch behavior</label><p>Choose how archived games open.</p></div><select class="input-dark" id="set-launch-archive-mode"><option value="explorer">Open with the system archive tool</option><option value="extract">Extract a temporary copy</option></select></div>
                         </div>
-                        <div class="settings-hero-actions">
-                            <button class="btn-primary" id="btn-save-preferences">
-                                <i data-lucide="save"></i>
-                                <span>Save Preferences</span>
-                            </button>
+                    </section>
+
+                    <section class="set-panel" id="set-sources-updates">
+                        <div class="settings-section-head" id="settings-sources-updates"><h3>Sources &amp; Updates</h3><p>Set provider preferences and version-check behavior.</p></div>
+                        <div class="settings-form-card">
+                            <div class="settings-field-row"><div><label for="set-preferred-source">Preferred metadata source</label><p>Used first for missing-source review and manual search defaults.</p></div><select class="input-dark" id="set-preferred-source"><option value="f95zone">F95Zone</option><option value="dlsite">DLsite</option><option value="itch">Itch.io</option></select></div>
+                            <div class="settings-field-row"><div><label for="toggle-automatic-update-checks">Automatic game update checks</label><p>Check linked games in the background at the configured interval.</p></div><label class="switch"><input type="checkbox" id="toggle-automatic-update-checks"><span class="slider round"></span></label></div>
+                            <div class="settings-field-row"><div><span class="settings-row-label">Update-check interval</span><p>The current implementation checks every seven days.</p></div><strong class="settings-static-value">Weekly</strong></div>
+                            <div class="settings-field-row"><div><span class="settings-row-label">Last completed check</span><p id="settings-last-update-check">Never</p></div><div><span class="settings-row-label">Confirmed updates</span><strong id="settings-confirmed-updates">0</strong></div></div>
+                            <div class="settings-field-row"><div><span class="settings-row-label">Manual maintenance</span><p>Check every local game with a supported linked source.</p></div><button type="button" class="btn-secondary" id="btn-check-library-updates"><i data-lucide="search-check"></i><span>Check Entire Library</span></button></div>
                         </div>
-                        <div class="settings-hero-grid">
-                            <div class="settings-kpi-card settings-kpi-library">
-                                <span class="settings-kpi-label">Library Footprint</span>
-                                <strong id="settings-kpi-library-total">0</strong>
-                                <span class="settings-kpi-detail" id="settings-kpi-library-detail">Installed 0, archives 0, wishlist 0</span>
-                            </div>
-                            <div class="settings-kpi-card settings-kpi-unresolved">
-                                <span class="settings-kpi-label">Needs Attention</span>
-                                <strong id="settings-kpi-unresolved-count">0</strong>
-                                <span class="settings-kpi-detail" id="settings-kpi-unresolved-detail">Unidentified entries and metadata gaps</span>
-                            </div>
-                            <div class="settings-kpi-card settings-kpi-source">
-                                <span class="settings-kpi-label">Preferred Source</span>
-                                <strong id="settings-kpi-source">F95Zone</strong>
-                                <span class="settings-kpi-detail" id="settings-kpi-source-detail">Used first for smart scan and search defaults</span>
-                            </div>
-                            <div class="settings-kpi-card settings-kpi-companion">
-                                <span class="settings-kpi-label">Companion Status</span>
-                                <strong id="settings-kpi-companion">Offline</strong>
-                                <span class="settings-kpi-detail" id="settings-kpi-companion-detail">Waiting for Chrome extension heartbeat</span>
-                            </div>
+                    </section>
+
+                    <section class="set-panel" id="set-companion">
+                        <div class="settings-section-head" id="settings-companion"><h3>Companion</h3><p>Connection details for the browser extension.</p></div>
+                        <div class="settings-form-card">
+                            <div class="settings-field-row"><div><span class="settings-row-label">Connection state</span><p id="settings-extension-detail">Waiting for a live heartbeat.</p></div><span class="settings-status-pill offline" id="settings-extension-status">Offline</span></div>
+                            <div class="settings-field-row"><div><span class="settings-row-label">Extension version</span><p id="settings-extension-version">Not reported</p></div><div><span class="settings-row-label">Last heartbeat</span><p id="settings-extension-heartbeat">Never</p></div></div>
+                            <div class="settings-field-row settings-field-row-stack"><div><span class="settings-row-label">Extension folder</span><p>Load this path as an unpacked extension when the companion is offline.</p></div><div class="path-box" id="settings-extension-path">Waiting for extension path...</div></div>
+                            <div class="settings-field-row"><div><span class="settings-row-label">Metadata queue</span><p id="settings-metadata-queue-detail">Actionable games missing cover art or screenshots.</p></div><strong id="settings-metadata-queue-count">0</strong></div>
+                            <div class="settings-queue-list" id="settings-metadata-queue-list"><div class="settings-queue-empty">Loading metadata queue...</div></div>
+                            <button class="btn-secondary" id="btn-settings-open-extension-tab"><i data-lucide="external-link"></i><span>Open Extension View</span></button>
                         </div>
-                    </div>
+                    </section>
 
-                    <div class="set-panel active" id="set-defaults">
-                        <div class="settings-panel-grid">
-                            <div class="set-card-main">
-                                <div class="set-card-top">
-                                    <div class="set-title-row">
-                                        <i data-lucide="folder-cog" class="set-icon-red"></i>
-                                        <h3>Library discovery defaults</h3>
-                                    </div>
-                                    <p class="set-desc">Choose where XDir scans, when it should look automatically, and how safely it should treat missing files and archives.</p>
-                                </div>
-                                <div class="set-toggle-row">
-                                    <label class="switch">
-                                        <input type="checkbox" id="toggle-startup-scan" checked>
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <div class="toggle-text">
-                                        <h4>Run a directory scan when XDir starts</h4>
-                                        <span>Turn this off if you want faster startup and prefer manual discovery runs.</span>
-                                    </div>
-                                </div>
-                                <div class="form-row">
-                                    <label>Primary game setups directory</label>
-                                    <div class="settings-browse-row">
-                                        <input type="text" id="setting-games-dir" placeholder="e.g. C:\Games or D:\Game setups" class="input-dark">
-                                        <button class="btn-secondary" id="btn-browse-dir">Browse...</button>
-                                    </div>
-                                    <span class="set-help">Normal Scan uses this root to discover folders, archives, and executables that are not in your library yet.</span>
-                                </div>
-                                <div class="form-row">
-                                    <label>Archive launch behavior</label>
-                                    <select class="input-dark" id="set-launch-archive-mode">
-                                        <option value="explorer">Open archive in Explorer / WinRAR / 7-Zip immediately</option>
-                                        <option value="extract">Extract a temporary sandboxed copy before launching</option>
-                                    </select>
-                                </div>
-                                <div class="form-row">
-                                    <label>Missing-entry grace scans</label>
-                                    <input type="number" min="1" max="10" step="1" id="setting-missing-grace-scans" class="input-dark" placeholder="3">
-                                    <span class="set-help">How many consecutive scans a missing local entry can be absent before XDir removes it from the library.</span>
-                                </div>
-                            </div>
-
-                            <div class="set-card-main">
-                                <div class="set-card-top">
-                                    <div class="set-title-row">
-                                        <i data-lucide="activity" class="set-icon-red"></i>
-                                        <h3>Current library health</h3>
-                                    </div>
-                                    <p class="set-desc">A live view of the library state behind the preferences above.</p>
-                                </div>
-                                <div class="settings-summary-grid">
-                                    <div class="settings-summary-card">
-                                        <span class="settings-summary-label">Library entries</span>
-                                        <strong id="settings-library-count">0</strong>
-                                    </div>
-                                    <div class="settings-summary-card">
-                                        <span class="settings-summary-label">Installed / folders</span>
-                                        <strong id="settings-installed-count">0</strong>
-                                    </div>
-                                    <div class="settings-summary-card">
-                                        <span class="settings-summary-label">Archives</span>
-                                        <strong id="settings-archives-count">0</strong>
-                                    </div>
-                                    <div class="settings-summary-card">
-                                        <span class="settings-summary-label">Wishlist</span>
-                                        <strong id="settings-wishlist-count">0</strong>
-                                    </div>
-                                </div>
-                                <div class="settings-note">
-                                    <strong>Local-first runtime.</strong>
-                                    XDir stores metadata locally and only reaches out when you explicitly scan, search, or repair library entries.
-                                </div>
-                                <div class="form-row">
-                                    <label>Local API server</label>
-                                    <input type="text" value="http://127.0.0.1:8765" readonly class="input-dark">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="set-panel" id="set-sources">
-                        <div class="settings-panel-grid">
-                            <div class="set-card-main">
-                                <div class="set-card-top">
-                                    <div class="set-title-row">
-                                        <i data-lucide="radar" class="set-icon-red"></i>
-                                        <h3>Preferred metadata source</h3>
-                                    </div>
-                                    <p class="set-desc">Choose which provider XDir should favor first when smart scans search for matches and when unresolved-game or wishlist search opens with a default source tab.</p>
-                                </div>
-                                <div class="form-row">
-                                    <label>Preferred source</label>
-                                    <select class="input-dark" id="set-preferred-source">
-                                        <option value="f95zone" selected>F95Zone: highest hit rate for adult VN, RPGM, Ren'Py, Unity, and forum-driven releases</option>
-                                        <option value="dlsite">DLsite: best when the title is sold as a Japanese doujin entry or RJ code</option>
-                                        <option value="itch">Itch.io: best for western indie builds, demos, and jam releases</option>
-                                    </select>
-                                </div>
-                                <div class="settings-note">
-                                    <strong id="settings-source-active-badge">F95Zone</strong>
-                                    <span id="settings-source-summary">will be queried first by smart metadata scan and opened first in the search modals that resolve uncertain matches.</span>
-                                </div>
-                            </div>
-
-                            <div class="set-card-main">
-                                <div class="set-card-top">
-                                    <div class="set-title-row">
-                                        <i data-lucide="orbit" class="set-icon-red"></i>
-                                        <h3>Source coverage at a glance</h3>
-                                    </div>
-                                    <p class="set-desc">Use the right provider for the right job instead of pushing every title through the same search path.</p>
-                                </div>
-                                <div class="settings-source-grid">
-                                    <article class="settings-source-card source-f95zone">
-                                        <span class="settings-source-badge">F95Zone</span>
-                                        <h4>Forum-first correction</h4>
-                                        <p>Best for community-released adult games, update tracking, and title cleanup when folder names are noisy.</p>
-                                    </article>
-                                    <article class="settings-source-card source-dlsite">
-                                        <span class="settings-source-badge">DLsite</span>
-                                        <h4>Doujin and RJ-heavy catalog</h4>
-                                        <p>Best when the local title resembles Japanese catalog names or you expect an RJ / VJ store listing.</p>
-                                    </article>
-                                    <article class="settings-source-card source-itch">
-                                        <span class="settings-source-badge">Itch.io</span>
-                                        <h4>Indie demo coverage</h4>
-                                        <p>Best for western prototype builds, small-team releases, and titles that live outside forum ecosystems.</p>
-                                    </article>
-                                    <article class="settings-source-card source-steam">
-                                        <span class="settings-source-badge">Steam</span>
-                                        <h4>Manual search support</h4>
-                                        <p>Steam remains available in universal search for wishlist and manual lookups, even though smart scan does not auto-match through it.</p>
-                                    </article>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="set-panel" id="set-maintenance">
-                        <div class="settings-panel-grid settings-panel-grid-wide">
-                            <div class="set-card-main">
-                                <div class="set-card-top">
-                                    <div class="set-title-row">
-                                        <i data-lucide="scan-search" class="set-icon-red"></i>
-                                        <h3>Scan flows</h3>
-                                    </div>
-                                    <p class="set-desc">Choose the smallest scan that fits the job so you do not reprocess more of the library than necessary.</p>
-                                </div>
-                                <div class="settings-action-grid">
-                                    <div class="settings-action-block tone-discovery">
-                                        <span class="settings-action-label">Discovery</span>
-                                        <h4>Normal scan</h4>
-                                        <p>Scans configured directories and imports newly discovered local games without reworking existing metadata links.</p>
-                                        <button class="btn-secondary settings-action-btn" id="btn-settings-scan-directory">
-                                            <i data-lucide="folder-search-2"></i>
-                                            <span>Scan Directory</span>
-                                        </button>
-                                    </div>
-                                    <div class="settings-action-block tone-smart">
-                                        <span class="settings-action-label">Repair unresolved</span>
-                                        <h4>Smart metadata scan</h4>
-                                        <p>Re-checks games with missing metadata, weak titles, or unresolved links and applies only high-confidence matches.</p>
-                                        <button class="btn-primary settings-action-btn" id="btn-settings-smart-scan">
-                                            <i data-lucide="sparkles"></i>
-                                            <span>Start Smart Scan</span>
-                                        </button>
-                                    </div>
-                                    <div class="settings-action-block tone-source">
-                                        <span class="settings-action-label">Source only</span>
-                                        <h4>Missing source scan</h4>
-                                        <p>Targets games that are still missing a primary online source and leaves fully linked entries alone.</p>
-                                        <button class="btn-secondary settings-action-btn" id="btn-settings-missing-source-scan">
-                                            <i data-lucide="link-2"></i>
-                                            <span>Find Missing Sources</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="set-card-main">
-                                <div class="set-card-top">
-                                    <div class="set-title-row">
-                                        <i data-lucide="shield-check" class="set-icon-red"></i>
-                                        <h3>Repair and refetch tools</h3>
-                                    </div>
-                                    <p class="set-desc">Use these when existing records need a full cleanup pass, a targeted rematch, or a hard reset of scraped metadata.</p>
-                                </div>
-                                <div class="settings-job-progress" id="settings-job-progress" hidden>
-                                    <div class="settings-job-progress-top">
-                                        <div class="settings-job-progress-copy">
-                                            <span class="settings-job-progress-kicker">Background Job</span>
-                                            <strong id="settings-job-progress-label">Processing library metadata...</strong>
-                                        </div>
-                                        <div class="settings-job-progress-meta">
-                                            <span id="settings-job-progress-count">0 / 0</span>
-                                            <span id="settings-job-progress-percent">0%</span>
-                                        </div>
-                                    </div>
-                                    <div class="settings-job-progress-track">
-                                        <div class="settings-job-progress-fill" id="settings-job-progress-fill" style="width: 0%;"></div>
-                                    </div>
-                                    <div class="settings-job-progress-current" id="settings-job-progress-current">Waiting for backend job...</div>
-                                </div>
-                                <div class="settings-action-stack">
-                                    <button class="btn-primary settings-action-btn settings-action-btn-lg" id="btn-fix-metadata">
-                                        <i data-lucide="wand-2"></i>
-                                        <span>Fix Titles & Refetch All Metadata</span>
-                                    </button>
-                                    <button class="btn-secondary settings-action-btn" id="btn-rematch-f95">
-                                        <i data-lucide="search"></i>
-                                        <span>Rematch Unidentified Games from F95Zone</span>
-                                    </button>
-                                    <button class="btn-secondary settings-action-btn settings-action-danger" id="btn-flush-metadata">
-                                        <i data-lucide="trash-2"></i>
-                                        <span>Flush All Scraped Metadata</span>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="set-panel" id="set-companion">
-                        <div class="settings-panel-grid">
-                            <div class="set-card-main">
-                                <div class="set-card-top">
-                                    <div class="set-title-row">
-                                        <i data-lucide="plug-zap" class="set-icon-red"></i>
-                                        <h3>Chrome companion health</h3>
-                                    </div>
-                                    <p class="set-desc">Keep an eye on the extension heartbeat and the local folder that Chrome should load as the unpacked companion.</p>
-                                </div>
-                                <div class="settings-companion-status-row">
-                                    <span class="settings-status-pill offline" id="settings-extension-status">Offline</span>
-                                    <span class="settings-companion-copy" id="settings-extension-detail">Waiting for a live heartbeat from the Chrome extension.</span>
-                                </div>
-                                <div class="form-row">
-                                    <label>Extension folder</label>
-                                    <div class="path-box" id="settings-extension-path">Waiting for extension path...</div>
-                                </div>
-                                <div class="settings-note">
-                                    <strong>Extension setup.</strong>
-                                    Load this folder as an unpacked extension in Chrome and keep the browser open when you want XDir to monitor metadata queue work.
-                                </div>
-                                <div class="set-actions-row">
-                                    <button class="btn-secondary" id="btn-settings-open-extension-tab">
-                                        <i data-lucide="external-link"></i>
-                                        <span>Open Extensions Workspace</span>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="set-card-main">
-                                <div class="set-card-top">
-                                    <div class="set-title-row">
-                                        <i data-lucide="list-collapse" class="set-icon-red"></i>
-                                        <h3>Metadata queue snapshot</h3>
-                                    </div>
-                                    <p class="set-desc">Identified games that still need covers or screenshots show up here so you can keep the companion workflow honest.</p>
-                                </div>
-                                <div class="settings-queue-summary">
-                                    <div>
-                                        <span class="settings-summary-label">Needs metadata right now</span>
-                                        <strong id="settings-metadata-queue-count">0</strong>
-                                        <span class="settings-kpi-detail" id="settings-metadata-queue-detail">Loading current queue...</span>
-                                    </div>
-                                </div>
-                                <div class="settings-queue-list" id="settings-metadata-queue-list">
-                                    <div class="settings-queue-empty">Loading metadata queue...</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <section class="set-panel" id="set-advanced">
+                        <div class="settings-section-head" id="settings-advanced"><h3>Advanced</h3><p>Repair utilities and destructive metadata operations.</p></div>
+                        <div class="settings-job-progress" id="settings-job-progress" hidden><div class="settings-job-progress-top"><div class="settings-job-progress-copy"><span class="settings-job-progress-kicker">Background job</span><strong id="settings-job-progress-label">Processing library metadata...</strong></div><div class="settings-job-progress-meta"><span id="settings-job-progress-count">0 / 0</span><span id="settings-job-progress-percent">0%</span></div></div><div class="settings-job-progress-track"><div class="settings-job-progress-fill" id="settings-job-progress-fill"></div></div><div class="settings-job-progress-current" id="settings-job-progress-current">Waiting for backend job...</div></div>
+                        <div class="settings-form-card"><div class="settings-field-row"><div><span class="settings-row-label">Repair titles and metadata</span><p>Rebuild display metadata for existing records.</p></div><button class="btn-secondary" id="btn-fix-metadata"><i data-lucide="wand-2"></i><span>Run Repair</span></button></div><div class="settings-field-row"><div><span class="settings-row-label">Rematch unidentified F95Zone entries</span><p>Legacy targeted repair for unresolved F95Zone records.</p></div><button class="btn-secondary" id="btn-rematch-f95"><i data-lucide="search"></i><span>Run Rematch</span></button></div></div>
+                        <div class="settings-danger-zone"><div><h4>Flush scraped metadata</h4><p>Removes downloaded metadata while preserving local records and source links.</p></div><button class="btn-danger" id="btn-flush-metadata"><i data-lucide="trash-2"></i><span>Flush Metadata</span></button></div>
+                    </section>
                 </section>
             </div>
         </main>
@@ -651,7 +364,7 @@
                     </h3>
                     <p class="scan-workflow-copy" id="scan-workflow-copy">Choose the scan mode that fits the work you want XDir to do right now.</p>
                 </div>
-                <button type="button" class="btn-secondary btn-icon-sm" id="btn-close-scan-workflow" title="Close scan workflow">
+                <button type="button" class="btn-secondary btn-icon-sm" id="btn-close-scan-workflow" title="Close scan workflow" aria-label="Close scan workflow">
                     <i data-lucide="x"></i>
                 </button>
             </div>
@@ -667,29 +380,18 @@
                         </span>
                         <span class="scan-mode-eyebrow">Normal Scan</span>
                         <span class="scan-mode-title">Quick local discovery</span>
-                        <span class="scan-mode-copy">Find new game folders and add them to your library immediately without modifying names or metadata.</span>
+                        <span class="scan-mode-copy">Find new game folders, archives, and executables and add them to your library without searching online sources or rewriting metadata.</span>
                     </button>
-                    <button type="button" class="scan-mode-card scan-mode-secondary" id="btn-scan-smart">
-                        <span class="scan-mode-head">
-                            <span class="scan-mode-icon">
-                                <i data-lucide="sparkles"></i>
-                            </span>
-                            <span class="scan-mode-kicker">Background cleanup</span>
-                        </span>
-                        <span class="scan-mode-eyebrow">Smart Metadata Scan</span>
-                        <span class="scan-mode-title">Clean & match library</span>
-                        <span class="scan-mode-copy">Normalize titles and match high-confidence covers and tags in the background. Review uncertain matches when ready.</span>
-                    </button>
-                    <button type="button" class="scan-mode-card scan-mode-tertiary" id="btn-scan-missing-source">
+                    <button type="button" class="scan-mode-card scan-mode-source" id="btn-scan-missing-source">
                         <span class="scan-mode-head">
                             <span class="scan-mode-icon">
                                 <i data-lucide="link-2"></i>
                             </span>
-                            <span class="scan-mode-kicker">Source-only recovery</span>
+                            <span class="scan-mode-kicker">Source discovery</span>
                         </span>
-                        <span class="scan-mode-eyebrow">Missing Source Scan</span>
-                        <span class="scan-mode-title">Only check games missing a main online source</span>
-                        <span class="scan-mode-copy">Leaves already linked titles alone and only searches for games that still need a primary online source before metadata can be fetched.</span>
+                        <span class="scan-mode-eyebrow">Find Missing Sources</span>
+                        <span class="scan-mode-title">Match unlinked games</span>
+                        <span class="scan-mode-copy">Search supported sources only for games that are not linked yet. High-confidence matches can be applied automatically, while plausible matches remain available for review.</span>
                     </button>
                 </div>
             </div>
@@ -701,11 +403,11 @@
                 <div>
                     <h3 class="source-modal-title">
                         <i data-lucide="scan-search" class="source-modal-title-icon"></i>
-                        <span id="scan-results-title">Smart Metadata Scan</span>
+                        <span id="scan-results-title">Find Missing Sources</span>
                     </h3>
-                    <p class="scan-workflow-copy" id="scan-results-copy">Track unresolved metadata matches and review anything that still needs attention.</p>
+                    <p class="scan-workflow-copy" id="scan-results-copy">Track source matches and review plausible candidates without interrupting the background job.</p>
                 </div>
-                <button type="button" class="btn-secondary btn-icon-sm" id="btn-close-scan-results" title="Close smart scan details">
+                <button type="button" class="btn-secondary btn-icon-sm" id="btn-close-scan-results" title="Close job details" aria-label="Close job details">
                     <i data-lucide="x"></i>
                 </button>
             </div>
@@ -714,7 +416,7 @@
                 <div class="scan-progress-shell">
                     <div class="scan-progress-head">
                         <div>
-                            <span class="scan-progress-eyebrow">Smart Metadata Scan</span>
+                            <span class="scan-progress-eyebrow">Library job</span>
                             <h4 id="smart-scan-status-title">Scanning metadata...</h4>
                             <p id="smart-scan-status-text">Preparing unresolved games...</p>
                         </div>
@@ -774,8 +476,8 @@
 
             <div class="scan-results-view" id="scan-results-summary-view" hidden>
                 <div class="scan-summary-shell">
-                    <span class="scan-progress-eyebrow" id="smart-scan-summary-eyebrow">Smart Metadata Scan</span>
-                    <h4 class="scan-summary-title" id="smart-scan-summary-title">Smart scan complete</h4>
+                    <span class="scan-progress-eyebrow" id="smart-scan-summary-eyebrow">Find Missing Sources</span>
+                    <h4 class="scan-summary-title" id="smart-scan-summary-title">Source discovery complete</h4>
                     <p class="scan-summary-copy" id="smart-scan-summary-copy">0 games scanned.</p>
                     <div class="scan-counter-grid">
                         <div class="scan-counter-card">
@@ -829,6 +531,27 @@
                 <div class="smart-review-list" id="smart-scan-review-list"></div>
             </div>
         </div>
+
+        <div class="source-modal-backdrop" id="refresh-metadata-backdrop" style="display:none;"></div>
+        <div class="source-link-form source-modal-centered source-modal-md source-modal-stack confirm-dialog" id="refresh-metadata-confirm" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="refresh-metadata-title">
+            <div class="source-modal-header">
+                <div>
+                    <h3 class="source-modal-title" id="refresh-metadata-title"><i data-lucide="refresh-cw" class="source-modal-title-icon"></i>Refresh all metadata?</h3>
+                    <p class="scan-workflow-copy">This refetches details only for games that already have a linked source.</p>
+                </div>
+                <button type="button" class="btn-secondary btn-icon-sm" id="btn-close-refresh-metadata" title="Close confirmation" aria-label="Close metadata refresh confirmation"><i data-lucide="x"></i></button>
+            </div>
+            <ul class="confirm-list">
+                <li>Existing source links will not be changed.</li>
+                <li>Local paths, progress, scores, journals, and custom tags are preserved.</li>
+                <li>The job can take several minutes and can be cancelled at any time.</li>
+            </ul>
+            <div class="scan-summary-actions">
+                <button type="button" class="btn-secondary" id="btn-cancel-refresh-metadata">Cancel</button>
+                <button type="button" class="btn-primary" id="btn-confirm-refresh-metadata"><i data-lucide="refresh-cw"></i><span>Refresh Metadata</span></button>
+            </div>
+        </div>
+        <div class="app-toast" id="app-toast" role="status" aria-live="polite" hidden></div>
 
         <!-- FULL-WINDOW GAME OVERVIEW PAGE -->
         <div class="overview-modal" id="overview-modal" style="display:none;">
@@ -976,12 +699,34 @@
                             <h3>Library Snapshot</h3>
                         </div>
                         <div class="ov-meta-list">
-                            <div class="ov-meta-row"><span>Local Version</span><b id="ov-local-version-text">N/A</b></div>
-                            <div class="ov-meta-row"><span>Latest Version</span><b id="ov-latest-version-text">N/A</b></div>
                             <div class="ov-meta-row"><span>Added</span><b id="ov-added-at-text">N/A</b></div>
                             <div class="ov-meta-row"><span>Last Seen</span><b id="ov-last-seen-text">N/A</b></div>
                             <div class="ov-meta-row"><span>Missing Tolerance</span><b id="ov-missing-status-text">Stable</b></div>
                         </div>
+
+                        <section class="version-panel" id="version-updates-section" aria-labelledby="version-updates-title">
+                            <div class="version-panel-head"><div><h3 id="version-updates-title">Version &amp; Updates</h3><p id="ov-update-explanation">Version checks use the preferred linked source.</p></div><span class="update-status-badge" id="ov-update-status">Never checked</span></div>
+                            <dl class="version-details">
+                                <div><dt>Local version</dt><dd id="ov-local-version-text">Unknown</dd></div>
+                                <div><dt>Latest linked version</dt><dd id="ov-latest-version-text">Unavailable</dd></div>
+                                <div><dt>Preferred source</dt><dd id="ov-update-source">None linked</dd></div>
+                                <div><dt>Last checked</dt><dd id="ov-update-checked-at">Never</dd></div>
+                            </dl>
+                            <div class="local-version-editor" id="local-version-editor" hidden>
+                                <label for="local-version-input">Installed version</label>
+                                <input type="text" class="input-dark" id="local-version-input" maxlength="80" autocomplete="off">
+                                <p>Records the installed version in XDir. It does not modify game files.</p>
+                                <div class="version-action-row"><button type="button" class="btn-secondary" id="btn-cancel-local-version">Cancel</button><button type="button" class="btn-primary" id="btn-save-local-version">Save</button></div>
+                            </div>
+                            <div class="version-inline-message" id="version-inline-message" role="status" aria-live="polite"></div>
+                            <div class="version-action-row">
+                                <button type="button" class="btn-secondary" id="btn-edit-local-version"><i data-lucide="pencil"></i><span>Edit Local Version</span></button>
+                                <button type="button" class="btn-primary" id="btn-check-update"><i data-lucide="refresh-cw"></i><span>Check for Update</span></button>
+                                <button type="button" class="btn-secondary" id="btn-mark-latest-installed" hidden><i data-lucide="check-circle"></i><span>Mark Latest as Installed</span></button>
+                                <button type="button" class="btn-ghost" id="btn-open-update-page" hidden><i data-lucide="external-link"></i><span>Open Update Page</span></button>
+                            </div>
+                            <p class="version-supporting-copy" id="mark-installed-copy" hidden>Use this after manually updating the game. XDir will only update its library record and will not modify game files.</p>
+                        </section>
 
                         <div class="section-top" style="margin-top: 8px;">
                             <h3>Game Sources</h3>

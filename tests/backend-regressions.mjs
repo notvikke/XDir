@@ -10,6 +10,7 @@ const mainPy = fs.readFileSync('backend/main.py', 'utf8');
 const sourceMapPy = fs.readFileSync('backend/source_map.py', 'utf8');
 const specFile = fs.readFileSync('XDir.spec', 'utf8');
 const runtimePy = fs.readFileSync('backend/runtime.py', 'utf8');
+const scraperPy = fs.readFileSync('backend/scraper.py', 'utf8');
 
 function assert(condition, message) {
   if (!condition) {
@@ -705,4 +706,23 @@ test('smart metadata scan exposes tracked background endpoints, cancellation, an
     smartScanPy.includes('def should_include_in_missing_source_scan'),
     'Expected backend/smart_scan.py to expose a dedicated target filter for missing-source-only scans.',
   );
+});
+
+test('stage one update and refresh contracts back the stage two interface', () => {
+  for (const route of [
+    '@app.post("/api/library/refresh-all-metadata")',
+    '@app.post("/api/library/check-updates")',
+    '@app.post("/api/games/{game_id}/check-update")',
+    '@app.put("/api/games/{game_id}/local-version")',
+    '@app.post("/api/games/{game_id}/mark-latest-installed")',
+  ]) {
+    assert(mainPy.includes(route), `Expected backend/main.py to expose ${route}.`);
+  }
+  assert(mainPy.includes('start_job("refresh-all-metadata"'), 'Expected metadata refresh to use a restorable tracked job.');
+  assert(mainPy.includes('start_job("check-updates"'), 'Expected whole-library update checks to use a tracked job.');
+  assert(databasePy.includes('update_status'), 'Expected persisted user-facing update state.');
+  assert(databasePy.includes('update_checked_at'), 'Expected persisted last-checked timestamps.');
+  assert(databasePy.includes('update_check_error'), 'Expected persisted update explanations/errors.');
+  assert(databasePy.includes('derive_update_status'), 'Expected upgraded libraries to normalize legacy update flags into confirmed-only statuses.');
+  assert(scraperPy.includes('derive_update_status'), 'Expected ordinary metadata refreshes to preserve confirmed-only update semantics.');
 });

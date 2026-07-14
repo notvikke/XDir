@@ -28,6 +28,7 @@ from backend.job_progress import (
     start_job,
     update_job,
 )
+from backend.update_checks import SUPPORTED_UPDATE_SOURCES, check_game_update, derive_update_status
 
 app = FastAPI(title="XDir API", version="0.2.0")
 APP_ROOT = get_app_root()
@@ -190,6 +191,9 @@ class UpdateGamePayload(BaseModel):
     is_identified: Optional[bool] = None
     title: Optional[str] = None
 
+class LocalVersionPayload(BaseModel):
+    value: Optional[str] = None
+
 class CustomTagPayload(BaseModel):
     tag_name: str
 
@@ -208,6 +212,7 @@ def get_stats(db: Session = Depends(get_db)):
     installed = db.query(Game).filter(Game.file_type.in_(["exe", "folder"]), Game.is_ignored == False, visible_clause).count()
     archives = db.query(Game).filter(Game.file_type == "archive", Game.is_ignored == False, visible_clause).count()
     wishlist = db.query(Game).filter(Game.file_type == "wishlist", Game.is_ignored == False, visible_clause).count()
+    confirmed_updates = db.query(Game).filter(Game.file_type != "wishlist", Game.update_available == True, Game.is_ignored == False, visible_clause).count()
     s = get_settings()
     return {
         "total": total,
@@ -216,6 +221,7 @@ def get_stats(db: Session = Depends(get_db)):
         "installed": installed,
         "archives": archives,
         "wishlist": wishlist,
+        "confirmed_updates": confirmed_updates,
         "games_dir": s.get("games_dir", ""),
         "extension_dir": EXTENSION_DIR
     }
@@ -226,6 +232,7 @@ class SettingsPayload(BaseModel):
     startup_scan: Optional[bool] = None
     missing_grace_scans: Optional[int] = None
     auto_update: Optional[bool] = None
+    automatic_update_checks: Optional[bool] = None
     preferred_source: Optional[str] = None
 
 @app.get("/api/settings")
@@ -236,6 +243,7 @@ def get_app_settings():
 
 @app.post("/api/settings")
 def update_app_settings(payload: SettingsPayload, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    previous = get_settings()
     data = {}
     if payload.games_dir is not None:
         data["games_dir"] = payload.games_dir
@@ -247,11 +255,14 @@ def update_app_settings(payload: SettingsPayload, background_tasks: BackgroundTa
         data["missing_grace_scans"] = max(1, int(payload.missing_grace_scans))
     if payload.auto_update is not None:
         data["auto_update"] = payload.auto_update
+    if payload.automatic_update_checks is not None:
+        data["automatic_update_checks"] = payload.automatic_update_checks
+        data["auto_update"] = payload.automatic_update_checks
     if payload.preferred_source is not None:
         data["preferred_source"] = payload.preferred_source
     updated = save_settings(data)
     
-    if payload.games_dir is not None:
+    if payload.games_dir is not None and payload.games_dir != previous.get("games_dir"):
         try:
             background_tasks.add_task(run_ingestion)
         except Exception:
@@ -1189,6 +1200,138 @@ def run_missing_source_metadata_scan_job():
 
     run_tracked_metadata_scan_job("missing-source-scan", run_missing_source_metadata_scan)
 
+
+def _refresh_metadata_result(total: int) -> dict:
+    return {
+        "cancelled": False,
+        "processed": 0,
+        "total": total,
+        "refreshed": 0,
+        "skipped": 0,
+        "unsupported": 0,
+        "failed": 0,
+        "current_source": "",
+        "summary": "",
+    }
+
+
+def run_refresh_all_metadata_job():
+    db = SessionLocal()
+    try:
+        from backend.scraper import apply_metadata_to_game, fetch_source_metadata
+
+        games = db.query(Game).filter(
+            Game.file_type != "wishlist",
+            Game.source_url.isnot(None),
+            Game.source_type != "unknown",
+        ).all()
+        result = _refresh_metadata_result(len(games))
+        for index, game in enumerate(games, start=1):
+            if is_job_cancel_requested("refresh-all-metadata"):
+                result["cancelled"] = True
+                break
+
+            source = str(game.source_type or "unknown").lower()
+            update_job("refresh-all-metadata", index - 1, game.title or game.raw_name, f"Source: {source}")
+            set_job_context("refresh-all-metadata", current_source=source, result=dict(result))
+            try:
+                if source not in SUPPORTED_UPDATE_SOURCES:
+                    result["unsupported"] += 1
+                else:
+                    data = fetch_source_metadata(game.source_type, game.source_url, game.source_id) or {}
+                    if data:
+                        apply_metadata_to_game(game, db, data, force_overwrite=True)
+                        game.update_status, game.update_available = derive_update_status(game.local_version, game.latest_version)
+                        db.add(game)
+                        db.commit()
+                        result["refreshed"] += 1
+                    else:
+                        result["skipped"] += 1
+            except Exception:
+                db.rollback()
+                result["failed"] += 1
+
+            result["processed"] = index
+            result["current_source"] = source
+            update_job("refresh-all-metadata", index, game.title or game.raw_name, f"Source: {source}")
+            set_job_context("refresh-all-metadata", current_source=source, result=dict(result))
+
+        result["summary"] = (
+            f"Metadata refresh {'cancelled' if result['cancelled'] else 'complete'}. "
+            f"{result['processed']} games processed, {result['refreshed']} refreshed, "
+            f"{result['skipped']} skipped, {result['unsupported']} unsupported, {result['failed']} failed."
+        )
+        set_job_context("refresh-all-metadata", result=result)
+        if result["cancelled"]:
+            cancel_job("refresh-all-metadata", result["summary"])
+        else:
+            finish_job("refresh-all-metadata", result["summary"])
+    except Exception as exc:
+        fail_job("refresh-all-metadata", str(exc))
+    finally:
+        db.close()
+
+
+def _update_check_result(total: int) -> dict:
+    return {
+        "cancelled": False,
+        "processed": 0,
+        "total": total,
+        "updates_available": 0,
+        "up_to_date": 0,
+        "unknown": 0,
+        "unsupported": 0,
+        "failed": 0,
+        "current_source": "",
+        "summary": "",
+    }
+
+
+def run_library_update_check_job():
+    db = SessionLocal()
+    try:
+        games = db.query(Game).filter(Game.file_type != "wishlist", Game.is_ignored == False).all()
+        result = _update_check_result(len(games))
+        for index, game in enumerate(games, start=1):
+            if is_job_cancel_requested("check-updates"):
+                result["cancelled"] = True
+                break
+            source = str(game.source_type or "unknown").lower()
+            update_job("check-updates", index - 1, game.title or game.raw_name, f"Source: {source}")
+            set_job_context("check-updates", current_source=source, result=dict(result))
+            checked = check_game_update(game, db)
+            if checked.update_status == "update_available":
+                result["updates_available"] += 1
+            elif checked.update_status == "up_to_date":
+                result["up_to_date"] += 1
+            elif checked.update_status == "unsupported_source":
+                result["unsupported"] += 1
+            elif checked.update_status == "check_failed":
+                result["failed"] += 1
+            else:
+                result["unknown"] += 1
+            result["processed"] = index
+            result["current_source"] = source
+            update_job("check-updates", index, game.title or game.raw_name, f"Source: {source}")
+            set_job_context("check-updates", current_source=source, result=dict(result))
+
+        result["summary"] = (
+            f"Update check {'cancelled' if result['cancelled'] else 'complete'}. "
+            f"{result['processed']} games checked, {result['updates_available']} updates available, "
+            f"{result['up_to_date']} up to date, {result['unknown']} unavailable, "
+            f"{result['unsupported']} unsupported, {result['failed']} failed."
+        )
+        save_settings({"last_update_check_at": datetime.utcnow().isoformat()})
+        set_job_context("check-updates", result=result)
+        if result["cancelled"]:
+            cancel_job("check-updates", result["summary"])
+        else:
+            finish_job("check-updates", result["summary"])
+    except Exception as exc:
+        fail_job("check-updates", str(exc))
+    finally:
+        db.close()
+
 @app.get("/api/search/f95zone")
 def search_f95zone_api(query: str):
     if not query or len(query.strip()) < 2:
@@ -1411,6 +1554,97 @@ def trigger_missing_source_metadata_scan(background_tasks: BackgroundTasks, db: 
 
     background_tasks.add_task(run_missing_source_metadata_scan_job)
     return state
+
+
+@app.post("/api/library/refresh-all-metadata")
+def trigger_refresh_all_metadata(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    running_job = any_running_job()
+    if running_job and running_job.get("job_key") != "refresh-all-metadata":
+        raise HTTPException(status_code=409, detail=f'Library job "{running_job.get("label") or running_job.get("job_key")}" is already running')
+    current = get_job("refresh-all-metadata")
+    if current.get("status") == "running":
+        return current
+    total = db.query(Game).filter(
+        Game.file_type != "wishlist",
+        Game.source_url.isnot(None),
+        Game.source_type != "unknown",
+    ).count()
+    state = start_job("refresh-all-metadata", total, "Refreshing linked game metadata")
+    set_job_context("refresh-all-metadata", result=_refresh_metadata_result(total))
+    if total == 0:
+        result = _refresh_metadata_result(0)
+        result["summary"] = "Metadata refresh complete. No source-linked games were found."
+        set_job_context("refresh-all-metadata", result=result)
+        finish_job("refresh-all-metadata", result["summary"])
+        return get_job("refresh-all-metadata")
+    background_tasks.add_task(run_refresh_all_metadata_job)
+    return state
+
+
+@app.post("/api/library/check-updates")
+def trigger_library_update_check(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    running_job = any_running_job()
+    if running_job and running_job.get("job_key") != "check-updates":
+        raise HTTPException(status_code=409, detail=f'Library job "{running_job.get("label") or running_job.get("job_key")}" is already running')
+    current = get_job("check-updates")
+    if current.get("status") == "running":
+        return current
+    total = db.query(Game).filter(Game.file_type != "wishlist", Game.is_ignored == False).count()
+    state = start_job("check-updates", total, "Checking library for updates")
+    set_job_context("check-updates", result=_update_check_result(total))
+    if total == 0:
+        result = _update_check_result(0)
+        result["summary"] = "Update check complete. No local games were found."
+        set_job_context("check-updates", result=result)
+        finish_job("check-updates", result["summary"])
+        return get_job("check-updates")
+    background_tasks.add_task(run_library_update_check_job)
+    return state
+
+
+@app.post("/api/games/{game_id}/check-update")
+def check_game_for_update(game_id: int, db: Session = Depends(get_db)):
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    checked = check_game_update(game, db)
+    return {"message": "Update check complete", "game": checked.to_dict()}
+
+
+@app.put("/api/games/{game_id}/local-version")
+def set_game_local_version(game_id: int, payload: LocalVersionPayload, db: Session = Depends(get_db)):
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    value = str(payload.value or "").strip()
+    if len(value) > 80:
+        raise HTTPException(status_code=400, detail="Local version must be 80 characters or fewer")
+    game.local_version = value or None
+    game.update_status, game.update_available = derive_update_status(game.local_version, game.latest_version)
+    game.update_check_error = None
+    db.add(game)
+    db.commit()
+    db.refresh(game)
+    persist_snapshot(game, db)
+    return {"message": "Installed version updated", "game": game.to_dict()}
+
+
+@app.post("/api/games/{game_id}/mark-latest-installed")
+def mark_latest_version_installed(game_id: int, db: Session = Depends(get_db)):
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if not game.latest_version:
+        raise HTTPException(status_code=400, detail="No linked latest version is available")
+    game.local_version = game.latest_version
+    game.update_status = "up_to_date"
+    game.update_available = False
+    game.update_check_error = None
+    db.add(game)
+    db.commit()
+    db.refresh(game)
+    persist_snapshot(game, db)
+    return {"message": "Latest linked version marked as installed", "game": game.to_dict()}
 
 @app.post("/api/library/smart-scan/review/{game_id}/apply")
 def apply_smart_scan_review_candidate(

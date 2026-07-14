@@ -345,6 +345,9 @@ def _build_review_item(
     return {
         "game_id": game.id,
         "local_name": game.raw_name,
+        "raw_name": game.raw_name,
+        "folder_path": game.folder_path,
+        "archive_name": game.archive_name,
         "current_title": game.title,
         "metadata_status": describe_metadata_status(game),
         "status": status,

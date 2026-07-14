@@ -51,6 +51,9 @@ class Game(Base):
     local_version = Column(String, nullable=True)
     latest_version = Column(String, nullable=True)
     update_available = Column(Boolean, default=False)
+    update_status = Column(String, default="never_checked")
+    update_checked_at = Column(DateTime, nullable=True)
+    update_check_error = Column(Text, nullable=True)
     
     # Rich details
     rating = Column(String, nullable=True)
@@ -94,6 +97,9 @@ class Game(Base):
             "local_version": self.local_version,
             "latest_version": self.latest_version,
             "update_available": self.update_available,
+            "update_status": self.update_status or "never_checked",
+            "update_checked_at": self.update_checked_at.isoformat() if self.update_checked_at else None,
+            "update_check_error": self.update_check_error,
             "rating": self.rating,
             "developer": self.developer,
             "release_date": self.release_date,
@@ -204,6 +210,18 @@ def init_db():
         except Exception:
             pass
         try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN update_status VARCHAR DEFAULT 'never_checked'"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN update_checked_at DATETIME"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN update_check_error TEXT"))
+        except Exception:
+            pass
+        try:
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_playing_progress ON games (playing_progress)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_is_ignored ON games (is_ignored)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_added_at ON games (added_at)"))
@@ -214,6 +232,10 @@ def init_db():
     # Backfill game_sources for already identified games
     with SessionLocal() as db_session:
         try:
+            from backend.update_checks import derive_update_status
+            for game in db_session.query(Game).all():
+                if game.latest_version or game.update_available:
+                    game.update_status, game.update_available = derive_update_status(game.local_version, game.latest_version)
             identified_games = db_session.query(Game).filter(Game.is_identified == True, Game.source_type != "unknown", Game.source_url != None).all()
             for g in identified_games:
                 if not g.sources:
