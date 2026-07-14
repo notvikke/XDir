@@ -2761,11 +2761,15 @@ input:checked + .slider:before { transform: translateX(22px); }
     padding: 0 40px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px;
-    grid-template-areas:
-        "cover snapshot"
-        "about snapshot";
     gap: 24px;
     align-items: start;
+}
+
+.ov-summary-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
 }
 
 .ov-detail-grid {
@@ -2778,7 +2782,6 @@ input:checked + .slider:before { transform: translateX(22px); }
 }
 
 .ov-cover-card {
-    grid-area: cover;
     background:
         linear-gradient(180deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.98));
     border: 1px solid rgba(96, 165, 250, 0.16);
@@ -2836,14 +2839,6 @@ input:checked + .slider:before { transform: translateX(22px); }
     display: flex;
     flex-direction: column;
     gap: 8px;
-}
-
-#ov-about-card {
-    grid-area: about;
-}
-
-#ov-snapshot-card {
-    grid-area: snapshot;
 }
 
 .ov-folder-full {
@@ -4336,13 +4331,6 @@ input:checked + .slider:before { transform: translateX(22px); }
     .ov-detail-grid,
     .ov-metrics-row {
         grid-template-columns: 1fr;
-    }
-
-    .ov-summary-grid {
-        grid-template-areas:
-            "cover"
-            "about"
-            "snapshot";
     }
 
     .ov-hero-content {

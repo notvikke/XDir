@@ -54,6 +54,20 @@ test('game overview exposes complete version update controls', () => {
   assert(!js.includes('prompt("Enter local version'), 'Expected local-version editing to avoid browser prompt().');
 });
 
+test('game overview ships version-panel styling under a fresh stylesheet revision', () => {
+  assert(
+    html.includes('static/css/styles.css?v=12'),
+    'Expected the overview layout and version-panel styles to use a fresh stylesheet revision so the desktop WebView cannot reuse the pre-panel CSS.',
+  );
+  assert(
+    css.includes('.ov-version-panel {') &&
+      css.includes('.ov-version-facts {') &&
+      css.includes('.ov-version-edit-row input {') &&
+      css.includes('.ov-version-actions button {'),
+    'Expected the overview version controls to have complete panel, facts, input, and action styling.',
+  );
+});
+
 test('overview maps every backend update state to user-facing text', () => {
   for (const label of [
     'Never checked',
@@ -639,6 +653,10 @@ test('overview cover swaps only after the new image has loaded to avoid one-time
 });
 
 test('overview cover stage uses a wide adaptive media panel instead of a forced portrait thumbnail slot', () => {
+  const summaryMainStart = html.indexOf('<div class="ov-summary-main">');
+  const snapshotStart = html.indexOf('<div class="ov-section-card" id="ov-snapshot-card">');
+  const summaryMainMarkup = html.slice(summaryMainStart, snapshotStart);
+
   assert(
     html.includes('id="ov-about-card"') &&
     html.includes('id="ov-snapshot-card"'),
@@ -646,10 +664,17 @@ test('overview cover stage uses a wide adaptive media panel instead of a forced 
   );
   assert(
     css.includes('grid-template-columns: minmax(0, 1fr) 320px;') &&
-    css.includes('grid-template-areas:') &&
-    css.includes('"cover snapshot"') &&
-    css.includes('"about snapshot"'),
-    'Expected styles.css to promote the overview artwork into the main content column instead of squeezing it into a narrow fixed sidebar slot.',
+    html.includes('<div class="ov-summary-main">') &&
+    css.includes('.ov-summary-main {') &&
+    !css.includes('"cover snapshot"') &&
+    !css.includes('"about snapshot"'),
+    'Expected the cover and About card to flow in an independent main column so a tall snapshot rail cannot create blank rows between them.',
+  );
+  assert(
+    summaryMainStart !== -1 &&
+      snapshotStart > summaryMainStart &&
+      summaryMainMarkup.includes('id="ov-gallery"'),
+    'Expected the screenshot gallery to continue in the independent main column instead of waiting below the taller snapshot rail.',
   );
   assert(
     !css.includes('aspect-ratio: 3 / 4.1;'),

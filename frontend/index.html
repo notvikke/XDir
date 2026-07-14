@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="static/css/styles.css?v=11">
+    <link rel="stylesheet" href="static/css/styles.css?v=12">
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @keyframes splashLoading {
@@ -1086,36 +1086,51 @@
                 </div>
 
                 <div class="ov-summary-grid">
-                    <div class="ov-cover-card" id="ov-cover-card">
-                        <div class="ov-cover-frame" id="ov-cover-frame">
-                            <img id="ov-cover-image" src="" alt="Game cover" referrerpolicy="no-referrer">
-                            <div class="ov-cover-fallback" id="ov-cover-fallback">X</div>
-                        </div>
-                        <div class="ov-cover-meta">
-                            <span class="section-subtitle">INSTALL LOCATION</span>
-                            <div class="ov-folder-full" id="ov-folder-full">D:\Games\Example</div>
-                        </div>
-                    </div>
-
-                    <div class="ov-section-card" id="ov-about-card">
-                        <div class="section-top">
-                            <h3>About & Tags</h3>
-                        </div>
-                        <div class="tag-cloud" id="ov-tag-cloud">
-                            <!-- Tags injected -->
-                        </div>
-                        
-                        <div class="custom-tag-input-row">
-                            <span>Custom Tags <i data-lucide="eye"></i></span>
-                            <div class="tag-input-box">
-                                <input type="text" id="ov-new-tag-input" placeholder="Add a tag...">
-                                <button id="ov-btn-add-tag">Add</button>
+                    <div class="ov-summary-main">
+                        <div class="ov-cover-card" id="ov-cover-card">
+                            <div class="ov-cover-frame" id="ov-cover-frame">
+                                <img id="ov-cover-image" src="" alt="Game cover" referrerpolicy="no-referrer">
+                                <div class="ov-cover-fallback" id="ov-cover-fallback">X</div>
+                            </div>
+                            <div class="ov-cover-meta">
+                                <span class="section-subtitle">INSTALL LOCATION</span>
+                                <div class="ov-folder-full" id="ov-folder-full">D:\Games\Example</div>
                             </div>
                         </div>
 
-                        <div class="desc-section">
-                            <h4 style="margin:0 0 8px 0;">Description</h4>
-                            <p id="ov-description">No description available. Click above or use Chrome extension to scrape from F95zone/DLsite!</p>
+                        <div class="ov-section-card" id="ov-about-card">
+                            <div class="section-top">
+                                <h3>About & Tags</h3>
+                            </div>
+                            <div class="tag-cloud" id="ov-tag-cloud">
+                                <!-- Tags injected -->
+                            </div>
+
+                            <div class="custom-tag-input-row">
+                                <span>Custom Tags <i data-lucide="eye"></i></span>
+                                <div class="tag-input-box">
+                                    <input type="text" id="ov-new-tag-input" placeholder="Add a tag...">
+                                    <button id="ov-btn-add-tag">Add</button>
+                                </div>
+                            </div>
+
+                            <div class="desc-section">
+                                <h4 style="margin:0 0 8px 0;">Description</h4>
+                                <p id="ov-description">No description available. Click above or use Chrome extension to scrape from F95zone/DLsite!</p>
+                            </div>
+                        </div>
+
+                        <div class="ov-section-card">
+                            <div class="section-top">
+                                <div>
+                                    <span class="section-subtitle">MEDIA GALLERY</span>
+                                    <h3>Screenshots</h3>
+                                </div>
+                                <span class="count-badge" id="ov-gallery-count">0</span>
+                            </div>
+                            <div class="gallery-grid" id="ov-gallery">
+                                <!-- Injected dynamically -->
+                            </div>
                         </div>
                     </div>
 
@@ -1202,21 +1217,6 @@
                             </button>
                         </div>
 
-                    </div>
-                </div>
-
-                <div class="ov-section">
-                    <div class="ov-section-card">
-                        <div class="section-top">
-                            <div>
-                                <span class="section-subtitle">MEDIA GALLERY</span>
-                                <h3>Screenshots</h3>
-                            </div>
-                            <span class="count-badge" id="ov-gallery-count">0</span>
-                        </div>
-                        <div class="gallery-grid" id="ov-gallery">
-                            <!-- Injected dynamically -->
-                        </div>
                     </div>
                 </div>
 
