@@ -11,6 +11,7 @@ const sourceMapPy = fs.readFileSync('backend/source_map.py', 'utf8');
 const specFile = fs.readFileSync('XDir.spec', 'utf8');
 const runtimePy = fs.readFileSync('backend/runtime.py', 'utf8');
 const versioningPy = fs.readFileSync('backend/versioning.py', 'utf8');
+const scraperPy = fs.readFileSync('backend/scraper.py', 'utf8');
 
 function assert(condition, message) {
   if (!condition) {
@@ -862,5 +863,30 @@ test('refresh all metadata is a source-preserving tracked job with bounded resul
     databasePy.includes('title_is_manual = Column(Boolean, default=False)') &&
       scraperPy.includes("not getattr(game, 'title_is_manual', False)"),
     'Expected explicit manual-title ownership to survive source metadata refreshes.',
+  );
+});
+
+test('stage two update and refresh UI is backed by canonical main contracts', () => {
+  for (const route of [
+    '@app.post("/api/library/refresh-all-metadata")',
+    '@app.post("/api/library/check-updates")',
+    '@app.post("/api/games/{game_id}/check-update")',
+    '@app.patch("/api/games/{game_id}/version")',
+    '@app.post("/api/games/{game_id}/mark-latest-installed")',
+  ]) {
+    assert(mainPy.includes(route), `Expected backend/main.py to expose ${route}.`);
+  }
+  assert(databasePy.includes('last_update_check_status'), 'Expected persisted user-facing update state.');
+  assert(databasePy.includes('last_update_check_at'), 'Expected persisted last-checked timestamps.');
+  assert(databasePy.includes('last_update_check_error'), 'Expected persisted update explanations and errors.');
+  assert(versioningPy.includes('apply_comparison_to_game'), 'Expected canonical version comparison services.');
+  assert(scraperPy.includes('apply_comparison_to_game'), 'Expected metadata refreshes to preserve canonical version semantics.');
+  assert(
+    (mainPy.match(/def run_refresh_all_metadata_job\(/g) || []).length === 1,
+    'Expected exactly one canonical refresh worker so an older merge implementation cannot override it.',
+  );
+  assert(
+    !mainPy.includes('backend.update_checks') && !databasePy.includes('backend.update_checks'),
+    'Expected runtime update behavior to use the canonical versioning service instead of a duplicate merge-era module.',
   );
 });

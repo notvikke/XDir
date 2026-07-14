@@ -30,16 +30,16 @@ test('splash status id matches the JavaScript lookup', () => {
 
 test('game overview exposes complete version update controls', () => {
   for (const id of [
-    'ov-version-status',
-    'ov-version-explanation',
-    'ov-version-error',
-    'ov-local-version-input',
-    'ov-btn-save-local-version',
-    'ov-btn-check-update',
-    'ov-btn-mark-latest-installed',
-    'ov-btn-open-update-page',
-    'ov-last-update-check-text',
-    'ov-preferred-update-source',
+    'ov-update-status',
+    'ov-update-explanation',
+    'version-inline-message',
+    'local-version-input',
+    'btn-save-local-version',
+    'btn-check-update',
+    'btn-mark-latest-installed',
+    'btn-open-update-page',
+    'ov-update-checked-at',
+    'ov-update-source',
   ]) {
     assert(html.includes(`id="${id}"`), `Expected overview version control #${id}.`);
   }
@@ -60,10 +60,10 @@ test('game overview ships version-panel styling under a fresh stylesheet revisio
     'Expected the overview layout and version-panel styles to use a fresh stylesheet revision so the desktop WebView cannot reuse the pre-panel CSS.',
   );
   assert(
-    css.includes('.ov-version-panel {') &&
-      css.includes('.ov-version-facts {') &&
-      css.includes('.ov-version-edit-row input {') &&
-      css.includes('.ov-version-actions button {'),
+    css.includes('.version-panel {') &&
+      css.includes('.version-details {') &&
+      css.includes('.local-version-editor {') &&
+      css.includes('.version-action-row {'),
     'Expected the overview version controls to have complete panel, facts, input, and action styling.',
   );
 });
@@ -86,12 +86,11 @@ test('overview maps every backend update state to user-facing text', () => {
 
 test('settings expose automatic and tracked whole-library update checks', () => {
   for (const id of [
-    'toggle-automatic-game-update-checks',
-    'btn-settings-check-updates',
-    'settings-update-last-check',
-    'settings-update-next-check',
-    'settings-update-count',
-    'settings-update-job-summary',
+    'toggle-automatic-update-checks',
+    'btn-check-library-updates',
+    'settings-last-update-check',
+    'settings-confirmed-updates',
+    'settings-job-progress',
   ]) {
     assert(html.includes(`id="${id}"`), `Expected Settings update control #${id}.`);
   }
@@ -102,8 +101,8 @@ test('settings expose automatic and tracked whole-library update checks', () => 
 });
 
 test('library cards show updates only from the persisted safe comparison flag', () => {
-  assert(js.includes('game.update_available ?'), 'Expected card rendering to read the persisted update_available flag.');
-  assert(js.includes('card-update-pill'), 'Expected a restrained Update Available badge on matching game cards.');
+  assert(js.includes('game.update_available === true'), 'Expected card rendering to read the persisted update_available flag.');
+  assert(js.includes('card-update-badge'), 'Expected a restrained Update Available badge on matching game cards.');
   assert(!js.includes("metadata.latest_version && metadata.latest_version !== game.local_version"), 'Expected no raw string-difference update badge fallback.');
 });
 
@@ -265,20 +264,23 @@ test('settings metadata actions expose a shared loading bar while long jobs run'
   );
 });
 
-test('settings page exposes current defaults, source preferences, and companion health controls', () => {
+test('settings page exposes focused library, update, companion, and advanced preferences', () => {
   assert(
-    html.includes('data-section="defaults"') &&
-      html.includes('data-section="sources"') &&
-      html.includes('data-section="maintenance"') &&
-      html.includes('data-section="companion"'),
-    'Expected the settings nav to be rebuilt around defaults, sources, maintenance, and companion sections.',
+    html.includes('data-section="library"') &&
+      html.includes('data-section="sources-updates"') &&
+      html.includes('data-section="companion"') &&
+      html.includes('data-section="advanced"'),
+    'Expected the settings nav to be rebuilt around library, sources and updates, companion, and advanced sections.',
   );
   assert(
     html.includes('id="set-preferred-source"') &&
-      html.includes('id="btn-settings-scan-directory"') &&
-      html.includes('id="btn-settings-missing-source-scan"') &&
+      html.includes('id="btn-check-library-updates"') &&
+      html.includes('id="btn-settings-export-library"') &&
+      html.includes('id="btn-settings-import-library"') &&
+      !html.includes('id="btn-settings-scan-directory"') &&
+      !html.includes('id="btn-settings-missing-source-scan"') &&
       !html.includes('id="btn-settings-smart-scan"'),
-    'Expected Settings to expose only Normal Scan and Find Missing Sources.',
+    'Expected Settings to expose update and portability tools without duplicating Library scan actions.',
   );
   assert(
     html.includes('id="settings-extension-status"') &&
@@ -367,13 +369,9 @@ test('library tab keeps directory management behind a compact sidebar control in
     'Expected the large inline library-directory banner and first-run CTA to be removed from the top of the library grid.',
   );
   assert(
-    !html.includes('id="setting-games-dir"') &&
-      !html.includes('id="btn-browse-dir"'),
-    'Expected the primary library path input to be removed from the settings page after moving directory management to the library tab.',
-  );
-  assert(
-    html.includes('Manage library folders from the Library tab'),
-    'Expected the settings page to point users back to the Library tab for directory management.',
+    html.includes('id="setting-games-dir"') &&
+      html.includes('id="btn-settings-manage-library-folders"'),
+    'Expected the redesigned settings page to expose the primary path while routing full multi-folder management to the compact modal.',
   );
   assert(
     js.includes('function renderLibraryDirectories(') &&
@@ -862,7 +860,7 @@ test('ui polish moves repeated modal, chip, and star-picker presentation into sh
   );
 });
 
-test('scan chooser exposes only Normal Scan and Find Missing Sources with tracked review results', () => {
+test('scan directory button launches a two-option chooser while tracked progress moves into a background indicator and results dialog', () => {
   assert(
     html.includes('id="scan-workflow-modal"'),
     'Expected frontend/index.html to include a dedicated scan chooser modal.',
@@ -871,19 +869,19 @@ test('scan chooser exposes only Normal Scan and Find Missing Sources with tracke
     html.includes('id="btn-scan-normal"') &&
       html.includes('id="btn-scan-missing-source"') &&
       !html.includes('id="btn-scan-smart"'),
-    'Expected the chooser modal to expose exactly Normal Scan and Find Missing Sources.',
+    'Expected the chooser modal to expose only Normal Scan and Find Missing Sources.',
   );
   assert(
     html.includes('id="scan-toolbar-progress"') &&
       html.includes('id="scan-toolbar-progress-fill"') &&
       html.includes('id="scan-toolbar-progress-label"'),
-    'Expected the library toolbar to expose compact missing-source progress while the background job runs.',
+    'Expected the library toolbar to expose a compact tracked-job progress indicator.',
   );
   assert(
     html.includes('id="scan-results-modal"') &&
       html.includes('id="smart-scan-summary-title"') &&
       html.includes('id="smart-scan-review-list"'),
-    'Expected missing-source completion and review content in a separate results dialog.',
+    'Expected completion and review content to live in a separate results dialog.',
   );
   assert(
     css.includes('.scan-workflow-view[hidden]') || css.includes('.scan-results-view[hidden]'),
@@ -920,9 +918,8 @@ test('scan chooser exposes only Normal Scan and Find Missing Sources with tracke
     'Expected frontend JS to apply or skip candidates through canonical missing-source review endpoints.',
   );
   assert(
-    js.includes("`${API_BASE}/api/library/jobs/${activeScanJobKey}/cancel`") ||
-      js.includes("`${API_BASE}/api/library/jobs/missing-source-scan/cancel`"),
-    'Expected frontend JS to call the generic backend cancellation endpoint for the active scan.',
+    js.includes("`${API_BASE}/api/library/jobs/${jobKey}/cancel`"),
+    'Expected frontend JS to call the generic backend cancellation endpoint.',
   );
 });
 
@@ -931,4 +928,65 @@ test('missing-source review rows can render a thumbnail beside unresolved games'
     js.includes('thumbnail_url') || html.includes('smart-review-thumb'),
     'Expected unresolved review rows to support a thumbnail beside each game when a candidate cover is available.',
   );
+});
+
+test('stage two exposes only local discovery and missing-source discovery from the library chooser', () => {
+  const chooserStart = html.indexOf('id="scan-workflow-choice-view"');
+  const chooserEnd = html.indexOf('id="scan-results-backdrop"');
+  const chooser = html.slice(chooserStart, chooserEnd);
+  assert(
+    (chooser.match(/class="scan-mode-card/g) || []).length === 2,
+    'Expected exactly two fully clickable scan cards.',
+  );
+  assert(chooser.includes('id="btn-scan-normal"'), 'Expected Normal Scan to remain available.');
+  assert(chooser.includes('id="btn-scan-missing-source"'), 'Expected Find Missing Sources to remain available.');
+  assert(!chooser.includes('btn-scan-smart'), 'Expected the retired smart-scan chooser control to be removed.');
+  assert(!/Smart Metadata Scan/i.test(chooser), 'Expected retired Smart Metadata Scan copy to be removed.');
+  assert(js.includes('`${API_BASE}/api/library/missing-source-scan`'), 'Expected source discovery to use the real missing-source API.');
+});
+
+test('library toolbar exposes restorable refresh-all metadata progress and cancellation', () => {
+  assert(html.includes('id="btn-refresh-metadata"'), 'Expected a Library toolbar Refresh Metadata action.');
+  assert(html.includes('id="refresh-metadata-confirm"'), 'Expected a lightweight linked-only refresh confirmation.');
+  assert(js.includes('/api/library/refresh-all-metadata'), 'Expected Refresh Metadata to call the real refresh-all endpoint.');
+  assert(js.includes('restoreTrackedJobs'), 'Expected active library jobs to be restored after a modal closes.');
+  assert(js.includes('startTrackedJob'), 'Expected duplicate-safe shared tracked-job starting.');
+  assert(js.includes('/cancel'), 'Expected tracked library jobs to support cancellation.');
+  assert(/Game\s*\$\{[^}]+\}\s*\/\s*\$\{[^}]+\}/.test(js) || html.includes('Game 0 / 0'), 'Expected current/total per-game progress.');
+  assert(js.includes('refreshLibraryStateAfterJob'), 'Expected completed jobs to refresh cards, stats, and an open overview.');
+});
+
+test('version and update controls render backend state without prompt dialogs', () => {
+  assert(html.includes('id="version-updates-section"'), 'Expected a dedicated Version & Updates overview section.');
+  assert(html.includes('id="local-version-editor"'), 'Expected a compact local-version editor.');
+  const localVersionFlow = js.slice(js.indexOf('async function saveCurrentLocalVersion'), js.indexOf('async function markLatestAsInstalled'));
+  assert(!/\bprompt\s*\(/.test(localVersionFlow), 'Expected local version editing not to use prompt().');
+  for (const status of ['never_checked', 'checking', 'up_to_date', 'update_available', 'local_version_unknown', 'remote_version_unavailable', 'version_differs', 'unsupported_source', 'check_failed']) {
+    assert(js.includes(status), `Expected a user-facing mapping for ${status}.`);
+  }
+  assert(js.includes('/check-update'), 'Expected Check for Update to use the per-game API.');
+  assert(js.includes('/version`'), 'Expected local version saves to use the canonical version API.');
+  assert(js.includes('/mark-latest-installed'), 'Expected Mark Latest as Installed to use its API.');
+});
+
+test('settings use four preference sections without duplicate library scans', () => {
+  const settingsStart = html.indexOf('id="settings-view"');
+  const settingsEnd = html.indexOf('id="scan-workflow-backdrop"');
+  const settings = html.slice(settingsStart, settingsEnd);
+  for (const id of ['settings-library', 'settings-sources-updates', 'settings-companion', 'settings-advanced']) {
+    assert(settings.includes(`id="${id}"`), `Expected Settings section ${id}.`);
+  }
+  assert(!/btn-settings-(scan-directory|smart-scan|missing-source-scan)/.test(settings), 'Expected Settings not to duplicate Library scan actions.');
+  assert(!/Smart Metadata Scan/i.test(settings), 'Expected retired Smart Metadata Scan copy to be absent from Settings.');
+  assert(settings.includes('id="toggle-automatic-update-checks"'), 'Expected automatic update checks to be configurable.');
+  assert(settings.includes('Weekly'), 'Expected the seven-day update interval to be displayed as Weekly.');
+});
+
+test('review rows expose enough candidate context and non-destructive resolution actions', () => {
+  for (const label of ['Apply Match', 'Open Source', 'Skip', 'Resolve Later']) {
+    assert(js.includes(label), `Expected review action ${label}.`);
+  }
+  for (const field of ['raw_name', 'creator', 'cover', 'version', 'confidence', 'reasons']) {
+    assert(js.includes(field), `Expected review rendering to use ${field}.`);
+  }
 });

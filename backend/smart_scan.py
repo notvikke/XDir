@@ -399,6 +399,9 @@ def build_missing_source_review_item(
         "match_reason": match_reason,
         # Compatibility fields retained until the stage-two frontend consumes the canonical contract.
         "local_name": game.raw_name,
+        "raw_name": game.raw_name,
+        "folder_path": game.folder_path,
+        "archive_name": getattr(game, "archive_name", None),
         "current_title": game.title,
         "metadata_status": describe_metadata_status(game),
         "status": status,

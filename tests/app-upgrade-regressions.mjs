@@ -104,7 +104,7 @@ test('settings expose weekly game update checks without reusing app auto-update'
   assert(configPy.includes('"automatic_game_update_checks": True'), 'Expected a dedicated automatic game-update setting.');
   assert(configPy.includes('"game_update_check_interval_days": 7'), 'Expected the update-check interval to remain configurable.');
   assert(mainPy.includes('automatic_game_update_checks: Optional[bool] = None'), 'Expected settings API payload support for the automatic toggle.');
-  assert(html.includes('id="toggle-automatic-game-update-checks"'), 'Expected the dedicated Settings toggle.');
+  assert(html.includes('id="toggle-automatic-update-checks"'), 'Expected the dedicated Settings toggle.');
   assert(js.includes('automatic_game_update_checks:'), 'Expected the Settings payload to save the dedicated toggle.');
 });
 

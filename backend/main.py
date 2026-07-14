@@ -566,7 +566,6 @@ class UpdateGamePayload(BaseModel):
     is_identified: Optional[bool] = None
     title: Optional[str] = None
 
-
 class GameVersionPayload(BaseModel):
     local_version: Optional[str] = None
 
@@ -601,6 +600,7 @@ def get_stats(db: Session = Depends(get_db)):
         "archives": archives,
         "wishlist": wishlist,
         "updates_available": updates_available,
+        "confirmed_updates": updates_available,
         "total_visible_games": total,
         "linked_games": linked,
         "unlinked_games": unlinked,
@@ -635,6 +635,7 @@ def get_app_settings():
 
 @app.post("/api/settings")
 def update_app_settings(payload: SettingsPayload, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    previous = get_settings()
     data = {}
     if payload.games_dirs is not None:
         data["games_dirs"] = payload.games_dirs
@@ -657,7 +658,6 @@ def update_app_settings(payload: SettingsPayload, background_tasks: BackgroundTa
     if payload.accent_color is not None:
         data["accent_color"] = payload.accent_color
     updated = save_settings(data)
-
     updated["extension_dir"] = EXTENSION_DIR
     updated["primary_games_dir"] = updated.get("games_dir", "")
     return {"message": "Settings saved successfully", "settings": updated}
@@ -2036,6 +2036,7 @@ def start_update_check_job_in_thread() -> bool:
         )
     Thread(target=run_update_check_job, daemon=True).start()
     return True
+
 
 @app.get("/api/search/f95zone")
 def search_f95zone_api(query: str):

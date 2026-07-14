@@ -267,6 +267,10 @@ def init_db():
     # Backfill game_sources for already identified games
     with SessionLocal() as db_session:
         try:
+            from backend.versioning import apply_comparison_to_game
+            for game in db_session.query(Game).all():
+                if game.latest_version or game.update_available:
+                    apply_comparison_to_game(game)
             identified_games = db_session.query(Game).filter(Game.is_identified == True, Game.source_type != "unknown", Game.source_url != None).all()
             for g in identified_games:
                 if not g.sources:
