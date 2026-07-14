@@ -50,7 +50,13 @@ class Game(Base):
     # Versioning & Updates
     local_version = Column(String, nullable=True)
     latest_version = Column(String, nullable=True)
-    update_available = Column(Boolean, default=False)
+    update_available = Column(Boolean, default=False, index=True)
+    last_update_check_at = Column(DateTime, nullable=True)
+    last_update_check_status = Column(String, default="never")
+    last_update_check_error = Column(Text, nullable=True)
+    update_detected_at = Column(DateTime, nullable=True)
+    local_version_is_manual = Column(Boolean, default=False)
+    title_is_manual = Column(Boolean, default=False)
     
     # Rich details
     rating = Column(String, nullable=True)
@@ -64,6 +70,8 @@ class Game(Base):
     user_score = Column(String, nullable=True)  # user star rating
     is_ignored = Column(Boolean, default=False, index=True)
     missing_scan_count = Column(Integer, default=0)
+    total_playtime_seconds = Column(Integer, default=0)
+    play_session_count = Column(Integer, default=0)
     
     # Timestamps
     added_at = Column(DateTime, default=datetime.utcnow, index=True)
@@ -94,6 +102,12 @@ class Game(Base):
             "local_version": self.local_version,
             "latest_version": self.latest_version,
             "update_available": self.update_available,
+            "last_update_check_at": self.last_update_check_at.isoformat() if self.last_update_check_at else None,
+            "last_update_check_status": self.last_update_check_status or "never",
+            "last_update_check_error": self.last_update_check_error,
+            "update_detected_at": self.update_detected_at.isoformat() if self.update_detected_at else None,
+            "local_version_is_manual": bool(self.local_version_is_manual),
+            "title_is_manual": bool(self.title_is_manual),
             "rating": self.rating,
             "developer": self.developer,
             "release_date": self.release_date,
@@ -103,6 +117,8 @@ class Game(Base):
             "user_score": self.user_score,
             "is_ignored": self.is_ignored,
             "missing_scan_count": self.missing_scan_count or 0,
+            "total_playtime_seconds": self.total_playtime_seconds or 0,
+            "play_session_count": self.play_session_count or 0,
             "added_at": self.added_at.isoformat() if self.added_at else None,
             "last_played": self.last_played.isoformat() if self.last_played else None,
             "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
@@ -204,9 +220,46 @@ def init_db():
         except Exception:
             pass
         try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN total_playtime_seconds INTEGER DEFAULT 0"))
+            conn.execute(text("UPDATE games SET total_playtime_seconds = COALESCE(total_playtime_seconds, 0)"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE games ADD COLUMN play_session_count INTEGER DEFAULT 0"))
+            conn.execute(text("UPDATE games SET play_session_count = COALESCE(play_session_count, 0)"))
+        except Exception:
+            pass
+        for statement in (
+            "ALTER TABLE games ADD COLUMN last_update_check_at DATETIME",
+            "ALTER TABLE games ADD COLUMN last_update_check_status VARCHAR DEFAULT 'never'",
+            "ALTER TABLE games ADD COLUMN last_update_check_error TEXT",
+            "ALTER TABLE games ADD COLUMN update_detected_at DATETIME",
+            "ALTER TABLE games ADD COLUMN local_version_is_manual BOOLEAN DEFAULT 0",
+            "ALTER TABLE games ADD COLUMN title_is_manual BOOLEAN DEFAULT 0",
+        ):
+            try:
+                conn.execute(text(statement))
+            except Exception:
+                pass
+        try:
+            conn.execute(text(
+                "UPDATE games SET last_update_check_status = CASE "
+                "WHEN last_update_check_status = 'checking' THEN 'never' "
+                "ELSE COALESCE(last_update_check_status, 'never') END"
+            ))
+            conn.execute(text(
+                "UPDATE games SET local_version_is_manual = COALESCE(local_version_is_manual, 0)"
+            ))
+            conn.execute(text(
+                "UPDATE games SET title_is_manual = COALESCE(title_is_manual, 0)"
+            ))
+        except Exception:
+            pass
+        try:
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_playing_progress ON games (playing_progress)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_is_ignored ON games (is_ignored)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_added_at ON games (added_at)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_games_update_available ON games (update_available)"))
         except Exception:
             pass
         conn.commit()

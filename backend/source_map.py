@@ -34,6 +34,14 @@ def _save_source_map(data: dict) -> None:
         json.dump(data, handle, indent=2, ensure_ascii=False)
 
 
+def load_source_map_data() -> dict:
+    return _load_source_map()
+
+
+def save_source_map_data(data: dict) -> None:
+    _save_source_map(data)
+
+
 def _snapshot_from_game(game: Game) -> dict:
     return {
         "folder_path": game.folder_path,
@@ -49,9 +57,23 @@ def _snapshot_from_game(game: Game) -> dict:
         "developer": game.developer,
         "cover_url": game.cover_url,
         "rating": game.rating,
+        "local_version": game.local_version,
         "latest_version": game.latest_version,
+        "update_available": bool(game.update_available),
+        "last_update_check_at": game.last_update_check_at.isoformat() if game.last_update_check_at else None,
+        "last_update_check_status": "never" if game.last_update_check_status == "checking" else (game.last_update_check_status or "never"),
+        "last_update_check_error": game.last_update_check_error,
+        "update_detected_at": game.update_detected_at.isoformat() if game.update_detected_at else None,
+        "local_version_is_manual": bool(game.local_version_is_manual),
+        "title_is_manual": bool(game.title_is_manual),
         "release_date": game.release_date,
         "description": game.description,
+        "playing_progress": game.playing_progress,
+        "user_score": game.user_score,
+        "is_ignored": bool(game.is_ignored),
+        "total_playtime_seconds": game.total_playtime_seconds or 0,
+        "play_session_count": game.play_session_count or 0,
+        "last_played": game.last_played.isoformat() if game.last_played else None,
         "screenshots": [s.url for s in game.screenshots],
         "tags": [t.tag_name for t in game.tags],
         "custom_tags": [t.tag_name for t in game.custom_tags],
@@ -120,6 +142,10 @@ def clear_metadata_from_all_snapshots() -> int:
         entry["cover_url"] = None
         entry["rating"] = None
         entry["latest_version"] = None
+        entry["update_available"] = False
+        entry["last_update_check_status"] = "never"
+        entry["last_update_check_error"] = None
+        entry["update_detected_at"] = None
         entry["release_date"] = None
         entry["description"] = None
         entry["screenshots"] = []
@@ -133,6 +159,84 @@ def clear_metadata_from_all_snapshots() -> int:
         _save_source_map(source_map)
 
     return cleared
+
+
+def _entries_match(existing: dict, incoming: dict) -> bool:
+    existing_folder = (existing.get("folder_path") or "").strip().lower()
+    incoming_folder = (incoming.get("folder_path") or "").strip().lower()
+    if existing_folder and incoming_folder and existing_folder == incoming_folder:
+        return True
+
+    existing_source_type = (existing.get("source_type") or "unknown").lower()
+    incoming_source_type = (incoming.get("source_type") or "unknown").lower()
+    existing_source_url = (existing.get("source_url") or "").strip().lower()
+    incoming_source_url = (incoming.get("source_url") or "").strip().lower()
+    if existing_source_type != "unknown" and existing_source_type == incoming_source_type and existing_source_url and existing_source_url == incoming_source_url:
+        return True
+
+    existing_source_id = (existing.get("source_id") or "").strip().lower()
+    incoming_source_id = (incoming.get("source_id") or "").strip().lower()
+    if existing_source_type != "unknown" and existing_source_type == incoming_source_type and existing_source_id and existing_source_id == incoming_source_id:
+        return True
+
+    existing_raw = _normalize_text(existing.get("raw_name") or "")
+    incoming_raw = _normalize_text(incoming.get("raw_name") or "")
+    if existing_raw and incoming_raw and existing_raw == incoming_raw:
+        return True
+
+    existing_title = _normalize_text(existing.get("title") or "")
+    incoming_title = _normalize_text(incoming.get("title") or "")
+    return bool(existing_title and incoming_title and existing_title == incoming_title)
+
+
+def _merge_snapshot_entry(existing: dict, incoming: dict) -> dict:
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if key in ("screenshots", "tags", "custom_tags", "journal_entries", "sources"):
+            current_values = list(merged.get(key) or [])
+            for item in list(value or []):
+                if item not in current_values:
+                    current_values.append(item)
+            merged[key] = current_values
+            continue
+
+        if value not in (None, "", []):
+            merged[key] = value
+        elif key not in merged:
+            merged[key] = value
+
+    return merged
+
+
+def merge_source_map_data(imported_data: dict | None) -> int:
+    if not imported_data or not isinstance(imported_data.get("entries"), list):
+        return 0
+
+    current = _load_source_map()
+    entries = current.get("entries", [])
+    merged_count = 0
+
+    for incoming in imported_data.get("entries", []):
+        if not isinstance(incoming, dict):
+            continue
+
+        matched = False
+        for index, existing in enumerate(entries):
+            if _entries_match(existing, incoming):
+                entries[index] = _merge_snapshot_entry(existing, incoming)
+                merged_count += 1
+                matched = True
+                break
+
+        if not matched:
+            entries.append(incoming)
+            merged_count += 1
+
+    current["version"] = max(int(current.get("version") or 1), int(imported_data.get("version") or 1))
+    current["entries"] = entries
+    if merged_count > 0:
+        _save_source_map(current)
+    return merged_count
 
 
 def find_source_map_entry(folder_path: str, raw_name: str, title: str = "") -> dict | None:
@@ -179,6 +283,41 @@ def hydrate_game_from_source_snapshot(game: Game, source_snapshot: dict) -> None
         game.source_type = source_snapshot["source_type"]
     if source_snapshot.get("is_identified"):
         game.is_identified = True
+    if source_snapshot.get("playing_progress") and (not getattr(game, "playing_progress", None) or getattr(game, "playing_progress", "unplayed") == "unplayed"):
+        game.playing_progress = source_snapshot["playing_progress"]
+    if source_snapshot.get("user_score") and not getattr(game, "user_score", None):
+        game.user_score = source_snapshot["user_score"]
+    if source_snapshot.get("is_ignored") and not getattr(game, "is_ignored", False):
+        game.is_ignored = bool(source_snapshot["is_ignored"])
+    game.total_playtime_seconds = max(int(getattr(game, "total_playtime_seconds", 0) or 0), int(source_snapshot.get("total_playtime_seconds") or 0))
+    game.play_session_count = max(int(getattr(game, "play_session_count", 0) or 0), int(source_snapshot.get("play_session_count") or 0))
+    if source_snapshot.get("last_played") and not getattr(game, "last_played", None):
+        try:
+            game.last_played = datetime.fromisoformat(source_snapshot["last_played"])
+        except Exception:
+            pass
+
+    if source_snapshot.get("local_version_is_manual"):
+        game.local_version_is_manual = True
+        game.local_version = source_snapshot.get("local_version")
+    elif not getattr(game, "local_version", None) and source_snapshot.get("local_version"):
+        game.local_version = source_snapshot["local_version"]
+
+    if source_snapshot.get("title_is_manual"):
+        game.title_is_manual = True
+        if source_snapshot.get("title"):
+            game.title = source_snapshot["title"]
+
+    game.update_available = bool(source_snapshot.get("update_available", getattr(game, "update_available", False)))
+    restored_status = source_snapshot.get("last_update_check_status") or getattr(game, "last_update_check_status", None) or "never"
+    game.last_update_check_status = "never" if restored_status == "checking" else restored_status
+    game.last_update_check_error = source_snapshot.get("last_update_check_error")
+    for field in ("last_update_check_at", "update_detected_at"):
+        if source_snapshot.get(field) and not getattr(game, field, None):
+            try:
+                setattr(game, field, datetime.fromisoformat(source_snapshot[field]))
+            except Exception:
+                pass
 
     for field in ("developer", "cover_url", "rating", "latest_version", "release_date", "description"):
         if not getattr(game, field) and source_snapshot.get(field):

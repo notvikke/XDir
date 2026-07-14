@@ -13,20 +13,90 @@ let activeScanJobKey = null;
 let activeScanModeKey = null;
 let currentSmartScanResult = null;
 let lastSettingsMetadataQueueRefreshAt = 0;
-const SMART_SCAN_JOB_KEY = 'smart-scan';
+let currentExtensionBrowser = 'chrome';
 const MISSING_SOURCE_SCAN_JOB_KEY = 'missing-source-scan';
-const SCAN_JOB_DEFINITIONS = {
-    [SMART_SCAN_JOB_KEY]: {
-        jobKey: SMART_SCAN_JOB_KEY,
-        startUrl: `${API_BASE}/api/library/smart-scan`,
-        toolbarLabel: 'Smart scan running',
-        resultsTitle: 'Smart Metadata Scan',
-        resultsCopy: 'Track unresolved metadata matches and review anything that still needs attention.',
-        reviewTitle: 'Review Unresolved Games',
-        reviewCopy: 'Apply the best candidate when you agree with the match, or skip it and resolve the game later.',
-        eyebrow: 'Smart Metadata Scan',
-        cancelledEyebrow: 'Smart Metadata Scan Cancelled',
+const AVAILABLE_THEME_MODES = ['midnight', 'graphite', 'obsidian'];
+const AVAILABLE_ACCENT_COLORS = ['blue', 'rose', 'teal', 'amber', 'emerald'];
+const EXTENSION_BROWSER_PRESETS = {
+    chrome: {
+        label: 'Chrome',
+        badge: 'Chrome extension',
+        title: 'Load the unpacked Chrome extension',
+        copy: 'Use Chrome\'s extensions page, enable Developer mode, then load the bundled XDir extension folder.',
+        steps: [
+            'Open chrome://extensions.',
+            'Enable Developer mode.',
+            'Click Load unpacked and choose the folder above.',
+        ],
     },
+    edge: {
+        label: 'Edge',
+        badge: 'Edge extension',
+        title: 'Load the unpacked Edge extension',
+        copy: 'Edge uses the same Chromium extension flow as Chrome, including the same bundled extension directory.',
+        steps: [
+            'Open edge://extensions.',
+            'Enable Developer mode in the left sidebar.',
+            'Click Load unpacked and choose the folder above.',
+        ],
+    },
+    opera: {
+        label: 'Opera',
+        badge: 'Opera extension',
+        title: 'Load the unpacked Opera extension',
+        copy: 'Opera can load the same unpacked source tree after developer mode is enabled on the extensions page.',
+        steps: [
+            'Open opera://extensions.',
+            'Enable Developer mode.',
+            'Click Load unpacked and choose the folder above.',
+        ],
+    },
+    brave: {
+        label: 'Brave',
+        badge: 'Brave extension',
+        title: 'Load the unpacked Brave extension',
+        copy: 'Brave follows the Chromium install flow, so the same bundled extension folder works directly.',
+        steps: [
+            'Open brave://extensions.',
+            'Enable Developer mode.',
+            'Click Load unpacked and choose the folder above.',
+        ],
+    },
+    vivaldi: {
+        label: 'Vivaldi',
+        badge: 'Vivaldi extension',
+        title: 'Load the unpacked Vivaldi extension',
+        copy: 'Vivaldi exposes the same unpacked extension flow used by other Chromium-based browsers.',
+        steps: [
+            'Open vivaldi://extensions.',
+            'Enable Developer mode.',
+            'Click Load unpacked and choose the folder above.',
+        ],
+    },
+    chromium: {
+        label: 'Chromium',
+        badge: 'Chromium extension',
+        title: 'Load the unpacked Chromium extension',
+        copy: 'Chromium accepts the exact same extension source tree that ships with XDir.',
+        steps: [
+            'Open chrome://extensions in Chromium.',
+            'Enable Developer mode.',
+            'Click Load unpacked and choose the folder above.',
+        ],
+    },
+    firefox: {
+        label: 'Firefox',
+        badge: 'Firefox temporary add-on',
+        title: 'Temporarily load the Firefox build for local testing',
+        copy: 'Firefox can temporarily load the same source folder for a session, but the Chromium browsers remain the primary supported sync target.',
+        steps: [
+            'Open about:debugging#/runtime/this-firefox.',
+            'Click Load Temporary Add-on.',
+            'Select the manifest.json file inside the folder above.',
+        ],
+    },
+};
+const SCAN_JOB_DEFINITIONS = {
     [MISSING_SOURCE_SCAN_JOB_KEY]: {
         jobKey: MISSING_SOURCE_SCAN_JOB_KEY,
         startUrl: `${API_BASE}/api/library/missing-source-scan`,
@@ -69,6 +139,30 @@ const SETTINGS_JOB_DEFINITIONS = {
             body: JSON.stringify({ confirmation_phrase: 'FLUSH' }),
         },
     },
+    'export-library': {
+        buttonId: 'btn-settings-export-library',
+        startUrl: `${API_BASE}/api/library/export`,
+        initialMessage: 'Packaging your primary library directory, source links, and saved library state...',
+        genericFailureMessage: 'Failed to export the portable library package',
+        idleHtml: `<i data-lucide="download"></i> <span>Export Full Library Package</span>`,
+        loadingHtml: `<i data-lucide="loader" class="spin"></i> <span>Exporting Library Package (Please wait)...</span>`,
+    },
+    'import-library': {
+        buttonId: 'btn-settings-import-library',
+        startUrl: `${API_BASE}/api/library/import`,
+        initialMessage: 'Importing the portable library package into your primary library directory and restoring source-linked metadata...',
+        genericFailureMessage: 'Failed to import the portable library package',
+        idleHtml: `<i data-lucide="upload"></i> <span>Import Library Package</span>`,
+        loadingHtml: `<i data-lucide="loader" class="spin"></i> <span>Importing Library Package (Please wait)...</span>`,
+    },
+    'update-check': {
+        buttonId: 'btn-settings-check-updates',
+        startUrl: `${API_BASE}/api/library/check-updates`,
+        initialMessage: 'Checking linked games for newer versions...',
+        genericFailureMessage: 'Failed to check the library for updates',
+        idleHtml: `<i data-lucide="search-check"></i> <span>Check Entire Library for Updates</span>`,
+        loadingHtml: `<i data-lucide="loader" class="spin"></i> <span>Checking Library for Updates...</span>`,
+    },
 };
 const SETTINGS_JOB_KEYS = Object.keys(SETTINGS_JOB_DEFINITIONS);
 
@@ -103,12 +197,162 @@ function formatSourceLabel(source) {
 function getPreferredSourceSummary(source) {
     const key = String(source || '').toLowerCase();
     if (key === 'dlsite') {
-        return 'will be searched first when smart scan and unresolved-match flows need a starting provider.';
+        return 'will be searched first when Find Missing Sources needs a starting provider.';
     }
     if (key === 'itch') {
         return 'will open first for indie-heavy search flows and be queried before the other automatic metadata providers.';
     }
-    return 'will be queried first by smart metadata scan and opened first in the search modals that resolve uncertain matches.';
+    return 'will be queried first by Find Missing Sources and opened first in search modals that resolve uncertain matches.';
+}
+
+function sanitizeThemeMode(value) {
+    const theme = String(value || '').toLowerCase();
+    return AVAILABLE_THEME_MODES.includes(theme) ? theme : 'midnight';
+}
+
+function sanitizeAccentColor(value) {
+    const accent = String(value || '').toLowerCase();
+    return AVAILABLE_ACCENT_COLORS.includes(accent) ? accent : 'blue';
+}
+
+function applyAppearanceSettings(themeMode, accentColor) {
+    const theme = sanitizeThemeMode(themeMode || appSettings?.theme_mode || 'midnight');
+    const accent = sanitizeAccentColor(accentColor || appSettings?.accent_color || 'blue');
+    document.body.dataset.theme = theme;
+    document.body.dataset.accent = accent;
+    try {
+        localStorage.setItem('xdir_theme_mode', theme);
+        localStorage.setItem('xdir_accent_color', accent);
+    } catch (_) {
+        // Ignore storage failures in restricted environments.
+    }
+}
+
+function getExtensionPath() {
+    const configured = String(appSettings?.extension_dir || '').trim();
+    if (configured) return configured;
+    return String(document.getElementById('ext-path-box')?.textContent || '').trim();
+}
+
+async function copyTextToClipboard(text) {
+    const value = String(text || '').trim();
+    if (!value) return false;
+
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(value);
+            return true;
+        }
+    } catch (_) {
+        // Fall through to the textarea fallback below.
+    }
+
+    const helper = document.createElement('textarea');
+    helper.value = value;
+    helper.setAttribute('readonly', '');
+    helper.style.position = 'fixed';
+    helper.style.opacity = '0';
+    helper.style.pointerEvents = 'none';
+    document.body.appendChild(helper);
+    helper.select();
+    helper.setSelectionRange(0, helper.value.length);
+
+    let copied = false;
+    try {
+        copied = document.execCommand('copy');
+    } catch (_) {
+        copied = false;
+    } finally {
+        helper.remove();
+    }
+
+    return copied;
+}
+
+async function openDesktopPath(path, { select = false } = {}) {
+    const normalized = String(path || '').trim();
+    if (!normalized) return false;
+
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_path) {
+        return !!(await window.pywebview.api.open_path(normalized, select));
+    }
+
+    return false;
+}
+
+async function openExtensionFolder() {
+    const extensionPath = getExtensionPath();
+    if (!extensionPath) {
+        alert('Extension path is not available yet.');
+        return;
+    }
+
+    const opened = await openDesktopPath(extensionPath);
+    if (!opened) {
+        alert(`Unable to open the extension folder automatically.\n\n${extensionPath}`);
+    }
+}
+
+async function copyExtensionPath(triggerButton = null) {
+    const extensionPath = getExtensionPath();
+    if (!extensionPath) {
+        alert('Extension path is not available yet.');
+        return;
+    }
+
+    const copied = await copyTextToClipboard(extensionPath);
+    if (!copied) {
+        alert(`Unable to copy the extension path automatically.\n\n${extensionPath}`);
+        return;
+    }
+
+    if (triggerButton) {
+        const originalHtml = triggerButton.innerHTML;
+        triggerButton.innerHTML = `<i data-lucide="check"></i> <span>Copied</span>`;
+        if (window.lucide) lucide.createIcons();
+        window.setTimeout(() => {
+            triggerButton.innerHTML = originalHtml;
+            if (window.lucide) lucide.createIcons();
+        }, 1400);
+    }
+}
+
+function renderExtensionBrowserGuide(browserKey = currentExtensionBrowser) {
+    const resolvedKey = Object.prototype.hasOwnProperty.call(EXTENSION_BROWSER_PRESETS, browserKey)
+        ? browserKey
+        : 'chrome';
+    const preset = EXTENSION_BROWSER_PRESETS[resolvedKey];
+    currentExtensionBrowser = resolvedKey;
+
+    document.querySelectorAll('.extension-browser-chip').forEach((button) => {
+        button.classList.toggle('active', button.dataset.browser === resolvedKey);
+    });
+
+    const browserLabel = document.getElementById('extension-browser-label');
+    if (browserLabel) browserLabel.textContent = preset.label;
+
+    const badge = document.getElementById('extension-install-badge');
+    if (badge) badge.textContent = preset.badge;
+
+    const title = document.getElementById('extension-install-title');
+    if (title) title.textContent = preset.title;
+
+    const copy = document.getElementById('extension-install-copy');
+    if (copy) copy.textContent = preset.copy;
+
+    const steps = document.getElementById('extension-install-steps');
+    if (steps) {
+        steps.innerHTML = preset.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('');
+    }
+}
+
+function formatExtensionHeartbeat(lastSeenSeconds) {
+    if (lastSeenSeconds == null || Number.isNaN(Number(lastSeenSeconds))) return 'Waiting';
+    const seconds = Math.max(0, Number(lastSeenSeconds));
+    if (seconds < 5) return 'Just now';
+    if (seconds < 60) return `${Math.round(seconds)}s ago`;
+    const minutes = Math.round(seconds / 60);
+    return `${minutes}m ago`;
 }
 
 function renderSettingsPreferredSource(source) {
@@ -119,7 +363,7 @@ function renderSettingsPreferredSource(source) {
     if (heroLabel) heroLabel.textContent = label;
 
     const heroDetail = document.getElementById('settings-kpi-source-detail');
-    if (heroDetail) heroDetail.textContent = `${label} is used first for smart scan and search defaults.`;
+    if (heroDetail) heroDetail.textContent = `${label} is used first for missing-source discovery and search defaults.`;
 
     const badge = document.getElementById('settings-source-active-badge');
     if (badge) badge.textContent = label;
@@ -286,9 +530,236 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function sameDirectoryPath(left, right) {
+    const normalize = (value) => String(value || '')
+        .trim()
+        .replace(/[\\/]+$/, '')
+        .toLowerCase();
+    return normalize(left) && normalize(left) === normalize(right);
+}
+
+function normalizeGamesDirList(rawDirs) {
+    const normalized = [];
+    const seen = new Set();
+    const candidates = Array.isArray(rawDirs) ? rawDirs : [rawDirs];
+
+    candidates.forEach((candidate) => {
+        const clean = String(candidate || '').trim();
+        if (!clean) return;
+        const key = clean.replace(/[\\/]+$/, '').toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        normalized.push(clean);
+    });
+
+    return normalized;
+}
+
+function getConfiguredGamesDirs(settings = appSettings) {
+    const directList = normalizeGamesDirList(settings?.games_dirs || []);
+    if (directList.length) return directList;
+
+    const primaryDir = String(settings?.games_dir || settings?.primary_games_dir || '').trim();
+    return primaryDir ? [primaryDir] : [];
+}
+
+function getPrimaryGamesDir(settings = appSettings) {
+    return getConfiguredGamesDirs(settings)[0] || '';
+}
+
+async function pickLibraryDirectory(initialDir = '') {
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.browse_folder) {
+            return await window.pywebview.api.browse_folder(initialDir || getPrimaryGamesDir() || '');
+        }
+    } catch (error) {
+        alert(`Failed to open the folder picker: ${error.message}`);
+        return null;
+    }
+
+    const manualPath = prompt('Enter the folder path that XDir should scan:', initialDir || getPrimaryGamesDir() || '');
+    return manualPath ? manualPath.trim() : null;
+}
+
+function openLibraryDirectoryModal() {
+    const modal = document.getElementById('library-directory-modal');
+    const backdrop = document.getElementById('library-directory-backdrop');
+    if (!modal || !backdrop) return;
+
+    renderLibraryDirectories();
+    backdrop.style.display = 'block';
+    modal.style.display = 'flex';
+    if (window.lucide) lucide.createIcons();
+}
+
+function closeLibraryDirectoryModal() {
+    const modal = document.getElementById('library-directory-modal');
+    const backdrop = document.getElementById('library-directory-backdrop');
+    if (modal) modal.style.display = 'none';
+    if (backdrop) backdrop.style.display = 'none';
+}
+
+function renderLibraryDirectories() {
+    const listEl = document.getElementById('library-directory-list');
+    const emptyEl = document.getElementById('library-directory-empty');
+    const summaryEl = document.getElementById('sidebar-library-directory-summary');
+
+    const configuredDirs = getConfiguredGamesDirs();
+    const primaryDir = configuredDirs[0] || '';
+    const extraCount = Math.max(0, configuredDirs.length - 1);
+
+    if (summaryEl) {
+        summaryEl.textContent = primaryDir
+            ? (extraCount > 0 ? `${primaryDir} (+${extraCount} more)` : primaryDir)
+            : 'No library folder configured yet.';
+    }
+
+    if (!listEl) return;
+
+    listEl.innerHTML = configuredDirs.map((dir, index) => {
+        const isPrimary = index === 0;
+        const removeDisabled = configuredDirs.length <= 1 ? 'disabled' : '';
+        return `
+            <article class="library-directory-card ${isPrimary ? 'is-primary' : ''}">
+                <div class="library-directory-card-head">
+                    <div class="library-directory-badges">
+                        <span class="library-directory-badge ${isPrimary ? 'primary' : ''}">
+                            ${isPrimary ? 'Primary' : 'Scan Root'}
+                        </span>
+                        <span class="library-directory-subcopy">${isPrimary ? 'Used for portable export/import' : 'Scanned alongside the primary root'}</span>
+                    </div>
+                </div>
+                <div class="library-directory-path">${escapeHtml(dir)}</div>
+                <div class="library-directory-actions">
+                    ${isPrimary ? '' : `
+                        <button type="button" class="btn-primary" data-library-dir-action="set-primary" data-index="${index}">
+                            <i data-lucide="arrow-up-right"></i>
+                            <span>Make Primary</span>
+                        </button>
+                    `}
+                    <button type="button" class="btn-secondary" data-library-dir-action="remove-directory" data-index="${index}" ${removeDisabled}>
+                        <i data-lucide="trash-2"></i>
+                        <span>Remove</span>
+                    </button>
+                </div>
+            </article>
+        `;
+    }).join('');
+
+    listEl.querySelectorAll('[data-library-dir-action="set-primary"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            await setPrimaryLibraryDirectory(Number(button.dataset.index));
+        });
+    });
+
+    listEl.querySelectorAll('[data-library-dir-action="remove-directory"]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            await removeLibraryDirectory(Number(button.dataset.index));
+        });
+    });
+
+    if (emptyEl) emptyEl.style.display = configuredDirs.length ? 'none' : 'block';
+    if (window.lucide) lucide.createIcons();
+}
+
+async function saveLibraryDirectories(nextDirs, { triggerScan = false } = {}) {
+    const normalizedDirs = normalizeGamesDirList(nextDirs);
+    if (!normalizedDirs.length) {
+        alert('Keep at least one library directory configured before saving.');
+        return false;
+    }
+
+    const managedButtons = Array.from(document.querySelectorAll('[data-library-dir-action], #btn-open-library-directory-modal, #btn-close-library-directory-modal, #btn-library-add-directory'));
+    const previousDisabled = managedButtons.map((button) => button.disabled);
+    managedButtons.forEach((button) => {
+        button.disabled = true;
+    });
+
+    try {
+        const res = await fetch(`${API_BASE}/api/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ games_dirs: normalizedDirs }),
+        });
+        const data = await readJsonResponse(res);
+        if (!res.ok) {
+            throw new Error(data.detail || 'Failed to save library directories');
+        }
+
+        const updatedSettings = {
+            ...(data.settings || {}),
+            games_dirs: normalizeGamesDirList(data.settings?.games_dirs || normalizedDirs),
+        };
+        updatedSettings.games_dir = updatedSettings.games_dirs[0] || '';
+        updatedSettings.primary_games_dir = updatedSettings.games_dir;
+        appSettings = updatedSettings;
+        renderLibraryDirectories();
+
+        if (triggerScan) {
+            await triggerRescan(document.getElementById('btn-add-game'));
+        } else {
+            await Promise.allSettled([fetchStats(), loadGames()]);
+        }
+
+        return true;
+    } catch (error) {
+        alert(`Failed to save library directories: ${error.message}`);
+        return false;
+    } finally {
+        managedButtons.forEach((button, index) => {
+            if (button && button.isConnected) {
+                button.disabled = previousDisabled[index];
+            }
+        });
+    }
+}
+
+async function addLibraryDirectory() {
+    const currentDirs = getConfiguredGamesDirs();
+    const chosenDir = await pickLibraryDirectory(getPrimaryGamesDir() || '');
+    if (!chosenDir) return;
+
+    if (currentDirs.some((dir) => sameDirectoryPath(dir, chosenDir))) {
+        alert('That folder is already part of your XDir library roots.');
+        return;
+    }
+
+    let nextDirs = [...currentDirs, chosenDir];
+    if (!currentDirs.length || confirm(`Make this the primary library directory used for portable export and import?\n\n${chosenDir}`)) {
+        nextDirs = [chosenDir, ...currentDirs];
+    }
+
+    await saveLibraryDirectories(nextDirs, { triggerScan: true });
+}
+
+async function setPrimaryLibraryDirectory(index) {
+    const currentDirs = getConfiguredGamesDirs();
+    if (!Number.isInteger(index) || index < 0 || index >= currentDirs.length || index === 0) return;
+
+    const nextPrimary = currentDirs[index];
+    const remainingDirs = currentDirs.filter((_, currentIndex) => currentIndex !== index);
+    await saveLibraryDirectories([nextPrimary, ...remainingDirs], { triggerScan: true });
+}
+
+async function removeLibraryDirectory(index) {
+    const currentDirs = getConfiguredGamesDirs();
+    if (!Number.isInteger(index) || index < 0 || index >= currentDirs.length) return;
+    if (currentDirs.length <= 1) {
+        alert('Keep at least one library directory configured. Add a replacement first, then remove the old one.');
+        return;
+    }
+
+    const dirToRemove = currentDirs[index];
+    const confirmed = confirm(`Remove this library directory from XDir?\n\n${dirToRemove}\n\nGames from this root will disappear from the library after the next scan.`);
+    if (!confirmed) return;
+
+    const nextDirs = currentDirs.filter((_, currentIndex) => currentIndex !== index);
+    await saveLibraryDirectories(nextDirs, { triggerScan: true });
+}
+
 function getScanJobDefinition(scanKey = null) {
-    const key = scanKey || activeScanModeKey || activeScanJobKey || SMART_SCAN_JOB_KEY;
-    return SCAN_JOB_DEFINITIONS[key] || SCAN_JOB_DEFINITIONS[SMART_SCAN_JOB_KEY];
+    const key = scanKey || activeScanModeKey || activeScanJobKey || MISSING_SOURCE_SCAN_JOB_KEY;
+    return SCAN_JOB_DEFINITIONS[key] || SCAN_JOB_DEFINITIONS[MISSING_SOURCE_SCAN_JOB_KEY];
 }
 
 function setMetadataActionBusyState(isBusy, activeButtonId = null) {
@@ -309,6 +780,7 @@ function renderSettingsJobProgress(state) {
     const count = document.getElementById('settings-job-progress-count');
     const percent = document.getElementById('settings-job-progress-percent');
     const current = document.getElementById('settings-job-progress-current');
+    const cancelButton = document.getElementById('btn-settings-cancel-job');
     if (!label || !fill || !count || !percent || !current || !state) return;
 
     const total = Number(state.total || 0);
@@ -322,6 +794,8 @@ function renderSettingsJobProgress(state) {
         ? `${state.detail || 'Processing...'} ${state.current_title}`
         : (state.detail || 'Preparing library job...');
     fill.style.width = `${safePercent}%`;
+    if (cancelButton) cancelButton.hidden = state.job_key !== 'update-check';
+    if (state.job_key === 'update-check') renderSettingsUpdateCheckSummary(appSettings, state);
 }
 
 async function getSettingsJobState(jobKey) {
@@ -342,7 +816,8 @@ async function pollSettingsJobProgress(jobKey) {
             renderSettingsJobProgress(state);
 
             if (state.status === 'completed') {
-                await Promise.allSettled([fetchStats(), loadGames(), fetchTags()]);
+                await Promise.allSettled([fetchStats(), loadGames(), fetchTags(), loadSettings()]);
+                if (jobKey === 'update-check') renderSettingsUpdateCheckSummary(appSettings, state);
                 alert(state.summary || 'Library job completed.');
                 hideSettingsJobProgress();
                 activeSettingsJobKey = null;
@@ -353,6 +828,13 @@ async function pollSettingsJobProgress(jobKey) {
                 hideSettingsJobProgress();
                 activeSettingsJobKey = null;
                 throw new Error(state.error || 'Library job failed');
+            }
+
+            if (state.status === 'cancelled') {
+                if (jobKey === 'update-check') renderSettingsUpdateCheckSummary(appSettings, state);
+                hideSettingsJobProgress();
+                activeSettingsJobKey = null;
+                return;
             }
         } catch (err) {
             pollFailures += 1;
@@ -417,6 +899,71 @@ function confirmFlushAllMetadata() {
     }
 
     return true;
+}
+
+async function pickLibraryExportPath() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_library_export_file) {
+        alert('Portable library export is only available in the desktop app build.');
+        return null;
+    }
+
+    try {
+        return await window.pywebview.api.save_library_export_file(getPrimaryGamesDir() || '');
+    } catch (error) {
+        alert(`Failed to open the export save dialog: ${error.message}`);
+        return null;
+    }
+}
+
+async function pickLibraryImportPath() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.browse_library_import_file) {
+        alert('Portable library import is only available in the desktop app build.');
+        return null;
+    }
+
+    try {
+        return await window.pywebview.api.browse_library_import_file(getPrimaryGamesDir() || '');
+    } catch (error) {
+        alert(`Failed to open the import package picker: ${error.message}`);
+        return null;
+    }
+}
+
+async function startPortableLibraryExport() {
+    const primaryDir = getPrimaryGamesDir();
+    if (!primaryDir) {
+        alert('Configure a primary library directory from the Library tab before exporting a library package.');
+        return;
+    }
+
+    const exportPath = await pickLibraryExportPath();
+    if (!exportPath) return;
+
+    await startSettingsTrackedJob('export-library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ export_path: exportPath }),
+    });
+}
+
+async function startPortableLibraryImport() {
+    const importPath = await pickLibraryImportPath();
+    if (!importPath) return;
+
+    const gamesDir = getPrimaryGamesDir();
+    if (!gamesDir) {
+        alert('Configure a primary library directory from the Library tab before importing a library package.');
+        return;
+    }
+
+    const confirmed = confirm(`Import will restore files into your primary library directory:\n\n${gamesDir}\n\nContinue?`);
+    if (!confirmed) return;
+
+    await startSettingsTrackedJob('import-library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ import_path: importPath }),
+    });
 }
 
 async function startSettingsTrackedJob(jobKey, requestInit = null) {
@@ -647,7 +1194,7 @@ function renderSmartScanSummary(state = null) {
         not_found: Number(state?.not_found_count || 0),
         failed: Number(state?.failed_count || 0),
         review_items: currentSmartScanResult?.review_items || [],
-        summary: state?.summary || state?.error || 'Smart scan finished.',
+        summary: state?.summary || state?.error || 'Missing source scan finished.',
         cancelled: state?.status === 'cancelled',
     };
     const result = state?.result || currentSmartScanResult || fallbackResult;
@@ -669,7 +1216,7 @@ function renderSmartScanSummary(state = null) {
     document.getElementById('scan-results-copy').textContent = 'Review what the scan changed and decide what still needs manual attention.';
     document.getElementById('smart-scan-summary-eyebrow').textContent = currentSmartScanResult.cancelled ? scanDefinition.cancelledEyebrow : scanDefinition.eyebrow;
     document.getElementById('smart-scan-summary-title').textContent = summaryTitle;
-    document.getElementById('smart-scan-summary-copy').textContent = currentSmartScanResult.summary || 'Smart scan finished.';
+    document.getElementById('smart-scan-summary-copy').textContent = currentSmartScanResult.summary || 'Missing source scan finished.';
     document.getElementById('smart-scan-summary-matched').textContent = String(currentSmartScanResult.matched || 0);
     document.getElementById('smart-scan-summary-review').textContent = String(currentSmartScanResult.manual_review || 0);
     document.getElementById('smart-scan-summary-not-found').textContent = String(currentSmartScanResult.not_found || 0);
@@ -695,8 +1242,8 @@ function renderSmartScanReviewList(reviewItems = null) {
         list.innerHTML = `
             <div class="smart-review-card">
                 <span class="smart-review-label">All clear</span>
-                <strong>No unresolved games remain in this smart-scan batch.</strong>
-                <p class="smart-review-empty">Close the modal or run another smart scan whenever you want to retry unresolved entries.</p>
+                <strong>No unresolved games remain in this missing-source batch.</strong>
+                <p class="smart-review-empty">Close the modal or run Find Missing Sources again whenever you want to retry unresolved entries.</p>
             </div>
         `;
         return;
@@ -804,12 +1351,17 @@ function renderSmartScanReviewList(reviewItems = null) {
     });
 
     list.querySelectorAll('.btn-dismiss-smart-review').forEach((button) => {
-        button.addEventListener('click', () => {
+        button.addEventListener('click', async () => {
             const gameId = Number(button.dataset.gameId || 0);
-            currentSmartScanResult.review_items = (currentSmartScanResult.review_items || []).map((item) =>
-                item.game_id === gameId ? { ...item, dismissed: true } : item,
-            );
-            renderSmartScanReviewList();
+            if (!gameId) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/library/missing-source-scan/review/${gameId}/skip`, { method: 'POST' });
+                if (!res.ok) throw new Error('Failed to skip candidate');
+                currentSmartScanResult.review_items = (currentSmartScanResult.review_items || []).filter((item) => item.game_id !== gameId);
+                renderSmartScanReviewList();
+            } catch (error) {
+                alert(`Failed to skip candidate: ${error.message}`);
+            }
         });
     });
 
@@ -823,7 +1375,7 @@ function renderSmartScanReviewList(reviewItems = null) {
             button.innerHTML = `<i data-lucide="loader" class="spin"></i><span>Applying...</span>`;
             if (window.lucide) lucide.createIcons();
             try {
-                const res = await fetch(`${API_BASE}/api/library/smart-scan/review/${gameId}/apply`, {
+                const res = await fetch(`${API_BASE}/api/library/missing-source-scan/review/${gameId}/apply`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(candidate),
@@ -899,7 +1451,7 @@ async function pollSmartScanJob(jobKey) {
                     not_found: Number(currentSmartScanResult?.not_found || 0),
                     failed: Number(currentSmartScanResult?.failed || 0) + 1,
                     review_items: currentSmartScanResult?.review_items || [],
-                    summary: `Smart scan polling failed: ${err.message}`,
+                    summary: `Missing source scan polling failed: ${err.message}`,
                 };
                 showScanResultsModal();
                 renderSmartScanSummary({ status: 'failed', error: err.message, result: currentSmartScanResult });
@@ -971,10 +1523,6 @@ async function startTrackedMetadataScan(scanKey) {
         hideScanToolbarProgress();
         alert(`Failed to start ${scanDefinition.resultsTitle.toLowerCase()}: ${err.message}`);
     }
-}
-
-async function startSmartScan() {
-    await startTrackedMetadataScan(SMART_SCAN_JOB_KEY);
 }
 
 async function startMissingSourceScan() {
@@ -1077,6 +1625,11 @@ let filterState = {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
+    try {
+        applyAppearanceSettings(localStorage.getItem('xdir_theme_mode'), localStorage.getItem('xdir_accent_color'));
+    } catch (_) {
+        applyAppearanceSettings('midnight', 'blue');
+    }
     initApp();
 });
 
@@ -1104,6 +1657,7 @@ function activateTab(tabId) {
 async function initApp() {
     setupWindowResizeHandles();
     setupEventListeners();
+    renderExtensionBrowserGuide(currentExtensionBrowser);
     const statsTask = fetchStats();
     const settingsTask = loadSettings();
     const tagsTask = fetchTags();
@@ -1113,7 +1667,7 @@ async function initApp() {
         console.error('Failed to resume active settings job', error);
     });
     resumeActiveSmartScanJob({ onlyRunning: true }).catch((error) => {
-        console.error('Failed to resume active smart scan job', error);
+        console.error('Failed to resume active missing-source scan job', error);
     });
     
     // Dismiss Splash Screen
@@ -1143,30 +1697,42 @@ async function checkExtensionStatus() {
         const dot = document.getElementById('ext-status-dot');
         const label = document.getElementById('ext-status-label');
         
-        const banner = document.getElementById('ext-banner-box');
-        const bTitle = document.getElementById('ext-banner-title');
-        const bDesc = document.getElementById('ext-banner-desc');
-        if (status.connected || status.status === 'connected') {
+        const indicator = document.getElementById('extension-status-indicator');
+        const liveStatus = document.getElementById('extension-live-status');
+        const liveDetail = document.getElementById('extension-live-detail');
+        const lastSeen = document.getElementById('extension-last-seen');
+        const connected = !!(status.connected || status.status === 'connected');
+
+        if (connected) {
             if (pill) pill.className = 'quick-status ext-pill connected';
             if (dot) dot.className = 'status-dot';
             if (label) label.textContent = `Extension Connected (v${status.version || '1.0'})`;
-            if (banner) banner.style.display = 'none';
+            if (indicator) indicator.className = 'extension-status-indicator connected';
+            if (liveStatus) liveStatus.textContent = `Connected${status.version ? ` (v${status.version})` : ''}`;
+            if (liveDetail) liveDetail.textContent = 'Browser companion heartbeat is live. You can scrape and monitor the queue right now.';
+            if (lastSeen) lastSeen.textContent = 'Just now';
         } else {
             if (pill) pill.className = 'quick-status ext-pill offline';
             if (dot) dot.className = 'status-dot offline';
             if (label) label.textContent = 'Extension Offline';
-            if (banner) {
-                banner.style.display = 'flex';
-                banner.className = 'ext-status-banner offline';
-                if (bTitle) bTitle.textContent = 'Chrome Companion Offline';
-                if (bDesc) bDesc.textContent = `No heartbeat received from Chrome. Open Chrome and make sure the extension is loaded from your application's extension folder.`;
-            }
+            if (indicator) indicator.className = 'extension-status-indicator offline';
+            if (liveStatus) liveStatus.textContent = 'Offline';
+            if (liveDetail) liveDetail.textContent = 'No heartbeat detected. Keep the browser open and load the unpacked extension from the folder shown here.';
+            if (lastSeen) lastSeen.textContent = formatExtensionHeartbeat(status.last_seen_seconds);
         }
 
         renderSettingsExtensionStatus(status);
 
     } catch (e) {
         console.debug("Extension status check failed", e);
+        const indicator = document.getElementById('extension-status-indicator');
+        const liveStatus = document.getElementById('extension-live-status');
+        const liveDetail = document.getElementById('extension-live-detail');
+        const lastSeen = document.getElementById('extension-last-seen');
+        if (indicator) indicator.className = 'extension-status-indicator offline';
+        if (liveStatus) liveStatus.textContent = 'Offline';
+        if (liveDetail) liveDetail.textContent = 'Unable to read extension heartbeat status right now.';
+        if (lastSeen) lastSeen.textContent = 'Unavailable';
         renderSettingsExtensionStatus({ connected: false });
     }
 }
@@ -1268,13 +1834,6 @@ function setupEventListeners() {
         });
     }
 
-    const smartScanBtn = document.getElementById('btn-scan-smart');
-    if (smartScanBtn) {
-        smartScanBtn.addEventListener('click', async () => {
-            await startSmartScan();
-        });
-    }
-
     const missingSourceScanBtn = document.getElementById('btn-scan-missing-source');
     if (missingSourceScanBtn) {
         missingSourceScanBtn.addEventListener('click', async () => {
@@ -1359,17 +1918,20 @@ function setupEventListeners() {
         if (modal) modal.style.display = 'none';
     });
 
-    // Settings Primary Game Setups Directory controls
-    document.getElementById('btn-browse-dir')?.addEventListener('click', async () => {
-        if (window.pywebview && window.pywebview.api && window.pywebview.api.browse_folder) {
-            const currentVal = document.getElementById('setting-games-dir').value;
-            const chosen = await window.pywebview.api.browse_folder(currentVal);
-            if (chosen) {
-                document.getElementById('setting-games-dir').value = chosen;
-            }
-        } else {
-            alert("Please enter or paste your desired folder path directly into the input box!");
-        }
+    document.getElementById('btn-open-library-directory-modal')?.addEventListener('click', () => {
+        openLibraryDirectoryModal();
+    });
+
+    document.getElementById('btn-close-library-directory-modal')?.addEventListener('click', () => {
+        closeLibraryDirectoryModal();
+    });
+
+    document.getElementById('library-directory-backdrop')?.addEventListener('click', () => {
+        closeLibraryDirectoryModal();
+    });
+
+    document.getElementById('btn-library-add-directory')?.addEventListener('click', async () => {
+        await addLibraryDirectory();
     });
 
     document.getElementById('btn-save-preferences')?.addEventListener('click', async () => {
@@ -1380,21 +1942,70 @@ function setupEventListeners() {
         renderSettingsPreferredSource(event.target.value);
     });
 
-    document.getElementById('btn-settings-scan-directory')?.addEventListener('click', async () => {
-        await triggerRescan(document.getElementById('btn-settings-scan-directory'));
+    document.getElementById('set-theme-mode')?.addEventListener('change', (event) => {
+        applyAppearanceSettings(event.target.value, document.getElementById('set-accent-color')?.value);
     });
 
-    document.getElementById('btn-settings-smart-scan')?.addEventListener('click', async () => {
-        await startSmartScan();
+    document.getElementById('set-accent-color')?.addEventListener('change', (event) => {
+        applyAppearanceSettings(document.getElementById('set-theme-mode')?.value, event.target.value);
+    });
+
+    document.getElementById('btn-settings-scan-directory')?.addEventListener('click', async () => {
+        await triggerRescan(document.getElementById('btn-settings-scan-directory'));
     });
 
     document.getElementById('btn-settings-missing-source-scan')?.addEventListener('click', async () => {
         await startMissingSourceScan();
     });
 
+    document.getElementById('btn-settings-export-library')?.addEventListener('click', async () => {
+        await startPortableLibraryExport();
+    });
+
+    document.getElementById('btn-settings-import-library')?.addEventListener('click', async () => {
+        await startPortableLibraryImport();
+    });
+
+    document.getElementById('btn-settings-check-updates')?.addEventListener('click', async () => {
+        await startSettingsTrackedJob('update-check');
+    });
+
+    document.getElementById('btn-settings-cancel-job')?.addEventListener('click', async () => {
+        if (!activeSettingsJobKey) return;
+        const button = document.getElementById('btn-settings-cancel-job');
+        if (button) button.disabled = true;
+        try {
+            await fetch(`${API_BASE}/api/library/jobs/${activeSettingsJobKey}/cancel`, { method: 'POST' });
+        } finally {
+            if (button) button.disabled = false;
+        }
+    });
+
     document.getElementById('btn-settings-open-extension-tab')?.addEventListener('click', () => {
         activateTab('extension');
         if (typeof loadExtensionQueue === 'function') loadExtensionQueue();
+    });
+
+    document.getElementById('btn-extension-open-folder')?.addEventListener('click', async () => {
+        await openExtensionFolder();
+    });
+
+    document.getElementById('btn-settings-open-extension-folder')?.addEventListener('click', async () => {
+        await openExtensionFolder();
+    });
+
+    document.getElementById('btn-extension-copy-path')?.addEventListener('click', async (event) => {
+        await copyExtensionPath(event.currentTarget);
+    });
+
+    document.getElementById('btn-settings-copy-extension-path')?.addEventListener('click', async (event) => {
+        await copyExtensionPath(event.currentTarget);
+    });
+
+    document.querySelectorAll('.extension-browser-chip').forEach((button) => {
+        button.addEventListener('click', () => {
+            renderExtensionBrowserGuide(button.dataset.browser || 'chrome');
+        });
     });
 
     // Filter Cards in Sidebar
@@ -1487,17 +2098,28 @@ function setupEventListeners() {
     document.getElementById('ov-btn-launch').addEventListener('click', () => {
         if (currentGame) launchGame(currentGame.id);
     });
+    document.getElementById('ov-btn-open-folder')?.addEventListener('click', () => {
+        if (currentGame) openGameFolder(currentGame.id);
+    });
 
     const updateBadgeBtn = document.getElementById('ov-badge-update');
     if (updateBadgeBtn) {
-        updateBadgeBtn.addEventListener('click', () => {
-            if (currentGame && currentGame.source_url) {
-                window.open(currentGame.source_url, '_blank');
-            } else if (currentGame) {
-                window.open(`https://f95zone.to/search/search?keywords=${encodeURIComponent(currentGame.title)}`, '_blank');
-            }
+        updateBadgeBtn.addEventListener('click', async () => {
+            const source = getPreferredGameUpdateSource(currentGame);
+            if (source?.source_url) await openExternalUrl(source.source_url);
         });
     }
+
+    document.getElementById('ov-btn-check-update')?.addEventListener('click', checkCurrentGameForUpdate);
+    document.getElementById('ov-btn-save-local-version')?.addEventListener('click', saveCurrentGameLocalVersion);
+    document.getElementById('ov-local-version-input')?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') saveCurrentGameLocalVersion();
+    });
+    document.getElementById('ov-btn-mark-latest-installed')?.addEventListener('click', markCurrentGameLatestInstalled);
+    document.getElementById('ov-btn-open-update-page')?.addEventListener('click', async () => {
+        const source = getPreferredGameUpdateSource(currentGame);
+        if (source?.source_url) await openExternalUrl(source.source_url);
+    });
 
     // Overview Progress Selector
     document.getElementById('ov-progress-select').addEventListener('change', async (e) => {
@@ -2601,12 +3223,47 @@ async function triggerRescan(triggerButton = null) {
 
 function collectSettingsPayload() {
     return {
-        games_dir: document.getElementById('setting-games-dir')?.value.trim() || '',
+        games_dirs: getConfiguredGamesDirs(),
         archive_mode: document.getElementById('set-launch-archive-mode')?.value || 'explorer',
         startup_scan: !!document.getElementById('toggle-startup-scan')?.checked,
+        automatic_game_update_checks: document.getElementById('toggle-automatic-game-update-checks')?.checked !== false,
+        game_update_check_interval_days: Number(appSettings?.game_update_check_interval_days || 7),
         missing_grace_scans: parseInt(document.getElementById('setting-missing-grace-scans')?.value || '3', 10) || 3,
         preferred_source: document.getElementById('set-preferred-source')?.value || appSettings?.preferred_source || 'f95zone',
+        theme_mode: sanitizeThemeMode(document.getElementById('set-theme-mode')?.value || appSettings?.theme_mode || 'midnight'),
+        accent_color: sanitizeAccentColor(document.getElementById('set-accent-color')?.value || appSettings?.accent_color || 'blue'),
     };
+}
+
+function renderSettingsUpdateCheckSummary(settings = appSettings, jobState = null) {
+    const lastCheck = document.getElementById('settings-update-last-check');
+    const nextCheck = document.getElementById('settings-update-next-check');
+    const updateCount = document.getElementById('settings-update-count');
+    const jobSummary = document.getElementById('settings-update-job-summary');
+    const enabled = settings?.automatic_game_update_checks !== false;
+    const intervalDays = Math.max(1, Number(settings?.game_update_check_interval_days || 7));
+    const lastValue = settings?.last_game_update_check_at;
+
+    if (lastCheck) lastCheck.textContent = lastValue ? formatDateTime(lastValue) : 'Never';
+    if (nextCheck) {
+        if (!enabled) {
+            nextCheck.textContent = 'Automatic checks disabled';
+        } else if (!lastValue || Number.isNaN(new Date(lastValue).getTime())) {
+            nextCheck.textContent = 'Eligible next launch';
+        } else {
+            const nextDate = new Date(new Date(lastValue).getTime() + intervalDays * 24 * 60 * 60 * 1000);
+            nextCheck.textContent = nextDate <= new Date() ? 'Eligible next launch' : formatDateTime(nextDate.toISOString());
+        }
+    }
+    if (updateCount) updateCount.textContent = String(lastKnownUpdateCount || 0);
+    if (jobSummary && jobState) {
+        const processed = Number(jobState.processed ?? jobState.completed ?? 0);
+        const total = Number(jobState.total || 0);
+        const updates = Number(jobState.updates_found || jobState.result?.updates_found || 0);
+        const failures = Number(jobState.failed_count || jobState.result?.failed_count || 0);
+        const unsupported = Number(jobState.unsupported_count || jobState.result?.unsupported_count || 0);
+        jobSummary.textContent = `${processed} / ${total} checked · ${updates} updates · ${failures} failed · ${unsupported} unsupported`;
+    }
 }
 
 async function loadSettings() {
@@ -2614,10 +3271,12 @@ async function loadSettings() {
         const res = await fetch(`${API_BASE}/api/settings`);
         if (!res.ok) throw new Error('Failed to load settings');
         const settings = await res.json();
+        const normalizedDirs = normalizeGamesDirList(settings.games_dirs || [settings.games_dir || settings.primary_games_dir || '']);
+        settings.games_dirs = normalizedDirs;
+        settings.games_dir = normalizedDirs[0] || settings.games_dir || settings.primary_games_dir || '';
+        settings.primary_games_dir = settings.games_dir;
         appSettings = settings;
-
-        const dirInput = document.getElementById('setting-games-dir');
-        if (dirInput) dirInput.value = settings.games_dir || '';
+        renderLibraryDirectories();
 
         const archiveMode = document.getElementById('set-launch-archive-mode');
         if (archiveMode) archiveMode.value = settings.archive_mode || 'explorer';
@@ -2625,16 +3284,32 @@ async function loadSettings() {
         const startupScan = document.getElementById('toggle-startup-scan');
         if (startupScan) startupScan.checked = settings.startup_scan !== false;
 
+        const automaticUpdateChecks = document.getElementById('toggle-automatic-game-update-checks');
+        if (automaticUpdateChecks) automaticUpdateChecks.checked = settings.automatic_game_update_checks !== false;
+
         const missingGrace = document.getElementById('setting-missing-grace-scans');
         if (missingGrace) missingGrace.value = String(settings.missing_grace_scans || 3);
 
         const preferredSource = document.getElementById('set-preferred-source');
         if (preferredSource) preferredSource.value = settings.preferred_source || 'f95zone';
 
+        const themeMode = sanitizeThemeMode(settings.theme_mode || 'midnight');
+        const themeSelect = document.getElementById('set-theme-mode');
+        if (themeSelect) themeSelect.value = themeMode;
+
+        const accentColor = sanitizeAccentColor(settings.accent_color || 'blue');
+        const accentSelect = document.getElementById('set-accent-color');
+        if (accentSelect) accentSelect.value = accentColor;
+
         const extensionPath = document.getElementById('settings-extension-path');
         if (extensionPath) extensionPath.textContent = settings.extension_dir || 'Waiting for extension path...';
+        const extensionPathMain = document.getElementById('ext-path-box');
+        if (extensionPathMain) extensionPathMain.textContent = settings.extension_dir || 'Waiting for extension path...';
 
+        applyAppearanceSettings(themeMode, accentColor);
         renderSettingsPreferredSource(settings.preferred_source || 'f95zone');
+        renderSettingsUpdateCheckSummary(settings);
+        renderExtensionBrowserGuide(currentExtensionBrowser);
         refreshSettingsMetadataQueue({ force: true }).catch((error) => {
             console.debug('Failed to refresh settings metadata queue', error);
         });
@@ -2645,10 +3320,6 @@ async function loadSettings() {
 
 async function persistSettings() {
     const payload = collectSettingsPayload();
-    if (!payload.games_dir) {
-        alert("Please specify a valid folder path.");
-        return;
-    }
 
     const btn = document.getElementById('btn-save-preferences');
     const originalHtml = btn ? btn.innerHTML : '';
@@ -2668,7 +3339,14 @@ async function persistSettings() {
         if (!res.ok) {
             throw new Error(data.detail || 'Unknown error');
         }
-        appSettings = data.settings;
+        const normalizedDirs = normalizeGamesDirList(data.settings?.games_dirs || payload.games_dirs);
+        appSettings = {
+            ...(data.settings || {}),
+            games_dirs: normalizedDirs,
+            games_dir: normalizedDirs[0] || data.settings?.games_dir || '',
+            primary_games_dir: normalizedDirs[0] || data.settings?.primary_games_dir || '',
+        };
+        renderLibraryDirectories();
         await Promise.all([fetchStats(), fetchTags(), loadGames(), loadSettings(), refreshSettingsMetadataQueue({ force: true })]);
     } catch (error) {
         alert(`Error saving settings: ${error.message}`);
@@ -2683,6 +3361,7 @@ async function persistSettings() {
 
 let lastKnownStatsTotal = null;
 let lastKnownStatsWishlist = null;
+let lastKnownUpdateCount = 0;
 let isFetchingGames = false;
 
 async function fetchStats() {
@@ -2694,15 +3373,23 @@ async function fetchStats() {
         const wishlistChanged = lastKnownStatsWishlist !== null && lastKnownStatsWishlist !== stats.wishlist;
         lastKnownStatsTotal = stats.total;
         lastKnownStatsWishlist = stats.wishlist;
+        lastKnownUpdateCount = Number(stats.updates_available || 0);
         
         document.getElementById('stat-total-games').textContent = stats.total;
         document.getElementById('stat-wishlist-games').textContent = stats.wishlist;
 
         renderSettingsSummary(stats);
-        
-        if (stats.games_dir) {
-            const dirInput = document.getElementById('setting-games-dir');
-            if (dirInput && !dirInput.value) dirInput.value = stats.games_dir;
+        renderSettingsUpdateCheckSummary(appSettings);
+
+        if (stats.games_dir || Array.isArray(stats.games_dirs)) {
+            const nextSettings = {
+                ...(appSettings || {}),
+                games_dir: stats.games_dir || getPrimaryGamesDir(appSettings),
+                primary_games_dir: stats.primary_games_dir || stats.games_dir || getPrimaryGamesDir(appSettings),
+                games_dirs: normalizeGamesDirList(stats.games_dirs || [stats.games_dir || getPrimaryGamesDir(appSettings)]),
+            };
+            appSettings = nextSettings;
+            renderLibraryDirectories();
         }
         if (stats.extension_dir) {
             const extBox = document.getElementById('ext-path-box');
@@ -2859,6 +3546,9 @@ function createGameCard(game) {
     const sourceText = game.source_type !== 'unknown' ? game.source_type.toUpperCase() : 'LOCAL';
     
     const topPillHtml = `<span class="card-top-pill ${pillClass}" ${isWishlist ? 'style="background:rgba(96,165,250,0.15); color:#93c5fd; border-color:rgba(96,165,250,0.3);"' : ''}>${pillText}</span>`;
+    const updatePillHtml = game.update_available
+        ? `<button class="card-update-pill" type="button" title="Open version and update details">UPDATE AVAILABLE</button>`
+        : '';
 
     const deleteWishlistHtml = isWishlist 
         ? `<button class="btn-card-delete-wishlist" title="Remove from Wishlist" style="position: absolute; top: 8px; right: 8px; z-index: 10; background: rgba(0, 0, 0, 0.85); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; border-radius: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: all 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.9)'; this.style.color='#ffffff';" onmouseout="this.style.background='rgba(0, 0, 0, 0.85)'; this.style.color='#f87171';" onclick="event.stopPropagation(); window.removeWishlistGame(${game.id}, '${escapedTitle}');">
@@ -2893,6 +3583,7 @@ function createGameCard(game) {
     card.innerHTML = `
         <div class="card-img-box" style="position: relative;">
             ${topPillHtml}
+            ${updatePillHtml}
             ${deleteWishlistHtml}
             ${coverHtml}
         </div>
@@ -2915,6 +3606,11 @@ function createGameCard(game) {
             ${wishlistLocalActionsHtml}
         </div>
     `;
+
+    card.querySelector('.card-update-pill')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openOverviewPage(game.id);
+    });
 
     card.addEventListener('click', () => {
         const gridEl = document.getElementById('games-grid');
@@ -2957,6 +3653,183 @@ function formatDateTime(value) {
         hour: '2-digit',
         minute: '2-digit'
     });
+}
+
+const GAME_UPDATE_STATUS_PRESENTATION = {
+    never: { label: 'Never checked', tone: 'muted' },
+    checking: { label: 'Checking...', tone: 'checking' },
+    up_to_date: { label: 'Up to date', tone: 'success' },
+    update_available: { label: 'Update available', tone: 'warning' },
+    local_version_unknown: { label: 'Local version unknown', tone: 'neutral' },
+    remote_version_unavailable: { label: 'Remote version unavailable', tone: 'neutral' },
+    version_differs: { label: 'Version differs', tone: 'neutral' },
+    unsupported_source: { label: 'Unsupported source', tone: 'neutral' },
+    failed: { label: 'Check failed', tone: 'error' },
+};
+
+function getPreferredGameUpdateSource(game) {
+    const preferred = (game?.sources || []).find(source => source.is_preferred);
+    if (preferred) return preferred;
+    if (game?.source_url || game?.source_id) {
+        return {
+            source_type: game.source_type || 'unknown',
+            source_url: game.source_url || null,
+            source_id: game.source_id || null,
+        };
+    }
+    return null;
+}
+
+function getGameUpdateExplanation(game, status) {
+    const local = game.local_version || 'Unknown';
+    const latest = game.latest_version || 'Unknown';
+    const source = getPreferredGameUpdateSource(game);
+    if (status === 'checking') return 'Reading the linked preferred source for an explicit version.';
+    if (status === 'up_to_date') return `Your local version (${local}) matches or is newer than the latest linked release (${latest}).`;
+    if (status === 'update_available') return `You have ${local}. The latest linked release is ${latest}.`;
+    if (status === 'local_version_unknown') return `Latest linked release: ${latest}. Enter your installed version to compare.`;
+    if (status === 'remote_version_unavailable') return 'The linked source did not expose a reliable version.';
+    if (status === 'version_differs') return `Local: ${local}. Online: ${latest}. XDir cannot safely determine which is newer.`;
+    if (status === 'unsupported_source') return `Automatic version checking is not currently available for ${(source?.source_type || 'this source').toUpperCase()}.`;
+    if (status === 'failed') return 'The linked source could not be checked. Your previous version and update state were preserved.';
+    return 'Check the linked source to compare your installed version with its latest explicit release.';
+}
+
+function renderGameUpdatePanel(game) {
+    const status = game.last_update_check_status || 'never';
+    const presentation = GAME_UPDATE_STATUS_PRESENTATION[status] || GAME_UPDATE_STATUS_PRESENTATION.never;
+    const source = getPreferredGameUpdateSource(game);
+    const statusEl = document.getElementById('ov-version-status');
+    const explanation = document.getElementById('ov-version-explanation');
+    const errorEl = document.getElementById('ov-version-error');
+    const input = document.getElementById('ov-local-version-input');
+    const sourceEl = document.getElementById('ov-preferred-update-source');
+    const lastChecked = document.getElementById('ov-last-update-check-text');
+    const checkButton = document.getElementById('ov-btn-check-update');
+    const markButton = document.getElementById('ov-btn-mark-latest-installed');
+    const openButton = document.getElementById('ov-btn-open-update-page');
+
+    if (statusEl) {
+        statusEl.textContent = presentation.label;
+        statusEl.dataset.tone = presentation.tone;
+    }
+    if (explanation) explanation.textContent = getGameUpdateExplanation(game, status);
+    if (input) input.value = game.local_version || '';
+    if (sourceEl) sourceEl.textContent = source ? String(source.source_type || 'unknown').toUpperCase() : 'Unlinked';
+    if (lastChecked) lastChecked.textContent = game.last_update_check_at ? formatDateTime(game.last_update_check_at) : 'Never';
+    if (errorEl) {
+        errorEl.textContent = game.last_update_check_error || '';
+        errorEl.hidden = !game.last_update_check_error;
+    }
+    if (checkButton) {
+        const checking = status === 'checking';
+        checkButton.disabled = checking || !source;
+        checkButton.innerHTML = checking
+            ? `<i data-lucide="loader" class="spin"></i><span>Checking...</span>`
+            : `<i data-lucide="search-check"></i><span>${game.last_update_check_at ? 'Check Again' : 'Check for Update'}</span>`;
+    }
+    if (markButton) {
+        const canMarkLatestInstalled = Boolean(game.latest_version) && (
+            game.update_available || ['local_version_unknown', 'version_differs'].includes(game.last_update_check_status)
+        );
+        markButton.hidden = !canMarkLatestInstalled;
+    }
+    if (openButton) openButton.hidden = !(game.update_available && source?.source_url);
+}
+
+function setOverviewVersionError(message = '') {
+    const errorEl = document.getElementById('ov-version-error');
+    if (!errorEl) return;
+    errorEl.textContent = message;
+    errorEl.hidden = !message;
+}
+
+async function refreshGameAfterVersionAction(game) {
+    currentGame = game;
+    renderOverview(currentGame);
+    await Promise.allSettled([loadGames(), fetchStats()]);
+}
+
+async function checkCurrentGameForUpdate() {
+    if (!currentGame) return;
+    const button = document.getElementById('ov-btn-check-update');
+    if (button?.disabled) return;
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = `<i data-lucide="loader" class="spin"></i><span>Checking...</span>`;
+    }
+    setOverviewVersionError('');
+    if (window.lucide) lucide.createIcons();
+    try {
+        const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/check-update`, { method: 'POST' });
+        const data = await readJsonResponse(res);
+        if (!res.ok) throw new Error(data.detail || 'Update check failed');
+        await refreshGameAfterVersionAction(data.game);
+    } catch (error) {
+        setOverviewVersionError(error.message || 'Update check failed');
+    } finally {
+        const currentButton = document.getElementById('ov-btn-check-update');
+        if (currentButton) {
+            currentButton.disabled = false;
+            currentButton.innerHTML = `<i data-lucide="search-check"></i><span>${currentGame?.last_update_check_at ? 'Check Again' : 'Check for Update'}</span>`;
+        }
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
+async function saveCurrentGameLocalVersion() {
+    if (!currentGame) return;
+    const input = document.getElementById('ov-local-version-input');
+    const button = document.getElementById('ov-btn-save-local-version');
+    if (!input || !button || button.disabled) return;
+    button.disabled = true;
+    setOverviewVersionError('');
+    try {
+        const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/version`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ local_version: input.value }),
+        });
+        const data = await readJsonResponse(res);
+        if (!res.ok) throw new Error(data.detail || 'Failed to save the local version');
+        await refreshGameAfterVersionAction(data.game);
+    } catch (error) {
+        setOverviewVersionError(error.message || 'Failed to save the local version');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function markCurrentGameLatestInstalled() {
+    if (!currentGame) return;
+    const button = document.getElementById('ov-btn-mark-latest-installed');
+    if (!button || button.disabled) return;
+    button.disabled = true;
+    setOverviewVersionError('');
+    try {
+        const res = await fetch(`${API_BASE}/api/games/${currentGame.id}/mark-latest-installed`, { method: 'POST' });
+        const data = await readJsonResponse(res);
+        if (!res.ok) throw new Error(data.detail || 'Failed to mark the latest version as installed');
+        await refreshGameAfterVersionAction(data.game);
+    } catch (error) {
+        setOverviewVersionError(error.message || 'Failed to mark the latest version as installed');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function formatPlaytimeDuration(totalSeconds) {
+    const seconds = Math.max(0, Number(totalSeconds || 0));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    if (hours <= 0) {
+        return `${Math.max(0, minutes)}m`;
+    }
+    if (minutes <= 0) {
+        return `${hours}h`;
+    }
+    return `${hours}h ${String(minutes).padStart(2, '0')}m`;
 }
 
 function guessEngineLabel(game) {
@@ -3063,7 +3936,7 @@ function renderOverview(game) {
     document.getElementById('ov-engine').textContent = `Engine: ${guessEngineLabel(game)}`;
     
     document.getElementById('ov-badge-update').style.display = game.update_available ? 'inline-block' : 'none';
-    document.getElementById('ov-badge-version').textContent = `DATA: ${game.local_version || 'V1.0'}`;
+    document.getElementById('ov-badge-version').textContent = `DATA: ${game.local_version || 'UNKNOWN'}`;
     document.getElementById('ov-badge-date').textContent = `RELEASED: ${game.release_date || 'N/A'}`;
     
     // Controls box
@@ -3074,6 +3947,8 @@ function renderOverview(game) {
     document.getElementById('ov-type-text').textContent = isWishlist ? 'WISHLIST ENTRY' : (isExe ? 'INSTALLED EXE' : 'ZIP/RAR ARCHIVE');
     const launchBtn = document.getElementById('ov-btn-launch');
     if (launchBtn) launchBtn.disabled = isWishlist;
+    const openFolderBtn = document.getElementById('ov-btn-open-folder');
+    if (openFolderBtn) openFolderBtn.disabled = isWishlist;
     
     // Metrics
     updateStarPickerUI(game.user_score);
@@ -3082,11 +3957,14 @@ function renderOverview(game) {
     document.getElementById('ov-progress-select').value = game.playing_progress || 'unplayed';
     document.getElementById('ov-size-text').textContent = `${game.file_type.toUpperCase()} | ${game.folder_path}`;
     document.getElementById('ov-folder-full').textContent = isWishlist ? 'Link this wishlist item to a scanned local folder or executable.' : (game.folder_path || 'Unknown path');
+    document.getElementById('ov-total-playtime-text').textContent = formatPlaytimeDuration(game.total_playtime_seconds);
+    document.getElementById('ov-last-played-text').textContent = formatDateTime(game.last_played);
     document.getElementById('ov-local-version-text').textContent = game.local_version || 'Unknown';
     document.getElementById('ov-latest-version-text').textContent = game.latest_version || 'Not fetched';
     document.getElementById('ov-added-at-text').textContent = formatDateTime(game.added_at);
     document.getElementById('ov-last-seen-text').textContent = formatDateTime(game.last_seen_at);
     document.getElementById('ov-missing-status-text').textContent = `${game.missing_scan_count || 0} missed scan(s)`;
+    renderGameUpdatePanel(game);
 
     updateOverviewCover(game.cover_url, game.title);
     
@@ -3265,13 +4143,30 @@ function renderOverview(game) {
     if (window.lucide) lucide.createIcons();
 }
 
-async function launchGame(gameId, openFolderOnly = false) {
+async function launchGame(gameId) {
     try {
         const res = await fetch(`${API_BASE}/api/games/${gameId}/launch`, { method: 'POST' });
-        const data = await res.json();
-        console.log(data.message);
+        const data = await readJsonResponse(res);
+        if (!res.ok) throw new Error(data.detail || 'Failed to launch game');
+        if (data.game && currentGame && currentGame.id === gameId) {
+            currentGame = data.game;
+            renderOverview(currentGame);
+        }
+        if (typeof loadGames === 'function') {
+            await loadGames();
+        }
     } catch (err) {
-        alert("Failed to launch executable or open Explorer folder");
+        alert(`Failed to launch executable or open Explorer folder: ${err.message}`);
+    }
+}
+
+async function openGameFolder(gameId) {
+    try {
+        const res = await fetch(`${API_BASE}/api/games/${gameId}/open-folder`, { method: 'POST' });
+        const data = await readJsonResponse(res);
+        if (!res.ok) throw new Error(data.detail || 'Failed to open folder');
+    } catch (err) {
+        alert(`Failed to open folder: ${err.message}`);
     }
 }
 
@@ -3288,30 +4183,36 @@ async function loadExtensionQueue() {
         });
         
         if (games.length === 0) {
-            list.innerHTML = `<div style="grid-column: span 3; padding: 24px; text-align: center; color: var(--badge-green); font-weight: 700;">All identified games have cover images and metadata synced.</div>`;
+            list.innerHTML = `<div class="settings-queue-empty">All identified games currently have their cover images and screenshots synced.</div>`;
             return;
         }
-        
-        games.forEach(g => {
-            const cleanQuery = encodeURIComponent(g.title);
-            const f95Url = `https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games&search=${cleanQuery}`;
-            const dlsiteUrl = `https://www.dlsite.com/home/fsr/=/keyword/${cleanQuery}`;
-            
-            list.innerHTML += `
+
+        list.innerHTML = games.slice(0, 8).map((game) => {
+            const query = encodeURIComponent(game.title || game.raw_name || '');
+            const f95Url = `https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games&search=${query}`;
+            const dlsiteUrl = `https://www.dlsite.com/home/fsr/=/keyword/${query}`;
+            return `
                 <div class="queue-item">
                     <div class="queue-info">
-                        <h4>${g.title}</h4>
-                        <span>${g.folder_path}</span>
+                        <h4>${escapeHtml(game.title || game.raw_name || 'Unknown title')}</h4>
+                        <span>${escapeHtml(game.folder_path || 'No local path recorded')}</span>
                     </div>
-                    <div style="display:flex; gap:8px;">
-                        <button class="btn-secondary" style="padding:6px 10px;" onclick="window.open('${f95Url}', '_blank')">F95</button>
-                        <button class="btn-secondary" style="padding:6px 10px;" onclick="window.open('${dlsiteUrl}', '_blank')">DLsite</button>
+                    <div class="extension-queue-actions">
+                        <button class="btn-secondary btn-xs-action extension-queue-link" type="button" data-url="${escapeHtml(f95Url)}">F95Zone</button>
+                        <button class="btn-secondary btn-xs-action extension-queue-link" type="button" data-url="${escapeHtml(dlsiteUrl)}">DLsite</button>
                     </div>
                 </div>
             `;
+        }).join('');
+
+        list.querySelectorAll('.extension-queue-link').forEach((button) => {
+            button.addEventListener('click', async () => {
+                await openExternalUrl(button.dataset.url || '');
+            });
         });
     } catch (err) {
         console.error("Failed to load queue", err);
+        list.innerHTML = `<div class="settings-queue-empty">Unable to load the current metadata queue.</div>`;
     }
 }
 
@@ -3406,7 +4307,7 @@ window.pickWishlistLocalPath = async function(id, title, pickMode) {
         }
     }
 
-    const initialDir = (appSettings && appSettings.games_dir) ? appSettings.games_dir : '';
+    const initialDir = getPrimaryGamesDir();
     const picker = pickMode === 'archive'
         ? window.pywebview.api.browse_local_game_file
         : window.pywebview.api.browse_folder;

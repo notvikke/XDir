@@ -4,7 +4,9 @@ import time
 import json
 import threading
 import ctypes
+import subprocess
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 from backend.runtime import get_app_root, get_bundle_root, get_data_root, migrate_legacy_data_directory
 
@@ -26,6 +28,7 @@ APP_ICON_PATH = os.path.join(BUNDLE_ROOT, APP_ICON_RELATIVE_PATH)
 SERVER_READY_TIMEOUT_SECONDS = 45.0
 _webview_module = None
 _fastapi_app = None
+_automatic_game_update_check_started = False
 
 STARTUP_SPLASH_HTML = """
 <!DOCTYPE html>
@@ -259,6 +262,42 @@ def wait_for_server_ready(timeout_seconds: float = 10.0) -> bool:
     return False
 
 
+def _as_utc_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def is_game_update_check_due(settings: dict, *, now: datetime | None = None) -> bool:
+    if settings.get("automatic_game_update_checks", True) is False:
+        return False
+    interval_days = max(1, int(settings.get("game_update_check_interval_days", 7) or 7))
+    last_value = settings.get("last_game_update_check_at")
+    if not last_value:
+        return True
+    try:
+        last_checked = datetime.fromisoformat(str(last_value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    current = _as_utc_naive(now or datetime.now(timezone.utc))
+    return current - _as_utc_naive(last_checked) >= timedelta(days=interval_days)
+
+
+def schedule_automatic_game_update_check(settings: dict) -> bool:
+    global _automatic_game_update_check_started
+    if _automatic_game_update_check_started or not is_game_update_check_due(settings):
+        return False
+    try:
+        from backend.main import start_update_check_job_in_thread
+
+        started = start_update_check_job_in_thread()
+    except Exception:
+        return False
+    if started:
+        _automatic_game_update_check_started = True
+    return started
+
+
 def schedule_library_maintenance():
     def bg_maintenance():
         get_settings, SessionLocal, run_ingestion, deduplicate_games = load_maintenance_dependencies()
@@ -277,6 +316,11 @@ def schedule_library_maintenance():
                 run_ingestion()
             except Exception:
                 pass
+
+        try:
+            schedule_automatic_game_update_check(get_settings())
+        except Exception:
+            pass
 
     threading.Thread(target=bg_maintenance, daemon=True).start()
 
@@ -377,11 +421,50 @@ def main():
                 if res and len(res) > 0:
                     return res[0]
             return None
+        def save_library_export_file(self, initial_dir=None):
+            if len(webview.windows) > 0:
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                res = webview.windows[0].create_file_dialog(webview.SAVE_DIALOG,
+                    directory=initial_dir or "",
+                    save_filename=f"xdir-library-{stamp}.xdir.zip",
+                    file_types=(
+                        "XDir Library Export (*.xdir.zip)",
+                        "Zip Files (*.zip)",
+                    ),
+                )
+                if res and len(res) > 0:
+                    return res[0]
+            return None
+        def browse_library_import_file(self, initial_dir=None):
+            if len(webview.windows) > 0:
+                res = webview.windows[0].create_file_dialog(webview.OPEN_DIALOG,
+                    directory=initial_dir or "",
+                    allow_multiple=False,
+                    file_types=(
+                        "XDir Library Export (*.xdir.zip;*.zip)",
+                        "Zip Files (*.zip)",
+                    ),
+                )
+                if res and len(res) > 0:
+                    return res[0]
+            return None
         def open_external_url(self, url):
             if not url:
                 return False
             try:
                 os.startfile(url)
+                return True
+            except Exception:
+                return False
+        def open_path(self, target_path, select=False):
+            path = os.path.normpath(str(target_path or "").strip())
+            if not path or not os.path.exists(path):
+                return False
+            try:
+                if select and os.path.isfile(path):
+                    subprocess.Popen(["explorer.exe", "/select,", path])
+                    return True
+                os.startfile(path)
                 return True
             except Exception:
                 return False

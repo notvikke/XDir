@@ -29,6 +29,16 @@ def _clone_job(job: dict | None) -> dict:
             "manual_review_count": 0,
             "not_found_count": 0,
             "failed_count": 0,
+            "processed": 0,
+            "current_game_id": None,
+            "updates_found": 0,
+            "up_to_date_count": 0,
+            "unknown_local_count": 0,
+            "remote_unavailable_count": 0,
+            "unsupported_count": 0,
+            "version_differs_count": 0,
+            "refreshed_count": 0,
+            "skipped_count": 0,
             "result": None,
         }
     return dict(job)
@@ -57,6 +67,16 @@ def start_job(job_key: str, total: int, label: str) -> dict:
             "manual_review_count": 0,
             "not_found_count": 0,
             "failed_count": 0,
+            "processed": 0,
+            "current_game_id": None,
+            "updates_found": 0,
+            "up_to_date_count": 0,
+            "unknown_local_count": 0,
+            "remote_unavailable_count": 0,
+            "unsupported_count": 0,
+            "version_differs_count": 0,
+            "refreshed_count": 0,
+            "skipped_count": 0,
             "result": None,
         }
         _JOBS[job_key] = job
@@ -113,6 +133,18 @@ def set_job_context(job_key: str, **changes) -> dict:
             return _clone_job(None)
         for key, value in changes.items():
             job[key] = value
+        return _clone_job(job)
+
+
+def remove_job_result_item(job_key: str, collection_key: str, game_id: int) -> dict:
+    with _JOB_LOCK:
+        job = _JOBS.get(job_key)
+        if not job:
+            return _clone_job(None)
+        result = dict(job.get("result") or {})
+        items = list(result.get(collection_key) or [])
+        result[collection_key] = [item for item in items if item.get("game_id") != game_id]
+        job["result"] = result
         return _clone_job(job)
 
 

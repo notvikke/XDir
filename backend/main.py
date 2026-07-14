@@ -1,6 +1,8 @@
 import os
 import subprocess
+import zipfile
 from datetime import datetime
+from threading import Lock, Thread
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, Depends, HTTPException, Query, Body, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,12 +12,27 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from pathlib import Path
 
-from backend.database import get_db, init_db, Game, Screenshot, Tag, CustomTag, JournalEntry, SessionLocal
+from backend.database import get_db, init_db, Game, Screenshot, Tag, CustomTag, JournalEntry, GameSource, SessionLocal
 from backend.scanner import inspect_archive, scan_single_game_path
-from backend.ingest import run_ingestion, determine_source_info, merge_game_records, cleanup_redundant_wishlist_entries
-from backend.config import get_settings, save_settings, get_games_dir
+from backend.ingest import run_ingestion, determine_source_info, merge_game_records, cleanup_redundant_wishlist_entries, deduplicate_games, apply_scanned_local_version
+from backend.config import get_settings, save_settings, get_games_dir, get_games_dirs, is_path_within_games_dirs
+from backend.library_portability import (
+    build_export_manifest,
+    extract_export_bundle,
+    load_export_bundle_manifest,
+    needs_metadata_refresh,
+    resolve_import_destination,
+    write_export_bundle,
+)
 from backend.runtime import get_app_root, get_bundle_root
-from backend.source_map import persist_game_snapshot, remove_game_snapshot, SOURCE_MAP_PATH, clear_metadata_from_all_snapshots
+from backend.source_map import persist_game_snapshot
+from backend.source_map import (
+    remove_game_snapshot,
+    SOURCE_MAP_PATH,
+    clear_metadata_from_all_snapshots,
+    load_source_map_data,
+    merge_source_map_data,
+)
 from backend.job_progress import (
     any_running_job,
     cancel_job,
@@ -24,9 +41,19 @@ from backend.job_progress import (
     get_job,
     is_job_cancel_requested,
     request_job_cancel,
+    remove_job_result_item,
     set_job_context,
     start_job,
     update_job,
+)
+from backend.launching import accumulate_playtime, choose_launch_executable
+from backend.versioning import (
+    apply_comparison_to_game,
+    check_game_update,
+    check_library_updates,
+    has_usable_linked_source,
+    resolve_update_source,
+    utc_now,
 )
 
 app = FastAPI(title="XDir API", version="0.2.0")
@@ -34,6 +61,15 @@ APP_ROOT = get_app_root()
 BUNDLE_ROOT = get_bundle_root()
 EXTENSION_DIR = os.path.join(BUNDLE_ROOT, "extension")
 FRONTEND_DIR = os.path.join(BUNDLE_ROOT, "frontend")
+EXPORT_LIBRARY_JOB_KEY = "export-library"
+IMPORT_LIBRARY_JOB_KEY = "import-library"
+UPDATE_CHECK_JOB_KEY = "update-check"
+REFRESH_ALL_METADATA_JOB_KEY = "refresh-all-metadata"
+ACTIVE_PLAY_SESSIONS: dict[str, dict[str, Any]] = {}
+ACTIVE_PLAY_SESSIONS_LOCK = Lock()
+ACTIVE_UPDATE_CHECK_GAME_IDS: set[int] = set()
+ACTIVE_UPDATE_CHECK_GAMES_LOCK = Lock()
+UPDATE_CHECK_JOB_START_LOCK = Lock()
 
 TRUSTED_LOCAL_ORIGINS = [
     "http://127.0.0.1:8765",
@@ -94,6 +130,335 @@ def visible_library_entry_clause():
         Game.missing_scan_count.is_(None),
     )
 
+
+def _register_active_play_session(session_key: str, payload: dict[str, Any]) -> None:
+    with ACTIVE_PLAY_SESSIONS_LOCK:
+        ACTIVE_PLAY_SESSIONS[session_key] = payload
+
+
+def _unregister_active_play_session(session_key: str) -> None:
+    with ACTIVE_PLAY_SESSIONS_LOCK:
+        ACTIVE_PLAY_SESSIONS.pop(session_key, None)
+
+
+def count_active_play_sessions(game_id: int) -> int:
+    with ACTIVE_PLAY_SESSIONS_LOCK:
+        return sum(1 for session in ACTIVE_PLAY_SESSIONS.values() if session.get("game_id") == game_id)
+
+
+def launch_tracked_game_process(game: Game, exe_path: str, db: Session) -> dict[str, Any]:
+    started_at = datetime.utcnow()
+    process = subprocess.Popen([exe_path], cwd=os.path.dirname(exe_path))
+    session_key = f"{game.id}:{process.pid}:{int(started_at.timestamp())}"
+
+    game.last_played = started_at
+    db.commit()
+    db.refresh(game)
+    persist_snapshot(game, db)
+
+    _register_active_play_session(
+        session_key,
+        {
+            "game_id": game.id,
+            "pid": process.pid,
+            "started_at": started_at,
+            "exe_path": exe_path,
+        },
+    )
+
+    def _monitor_session():
+        try:
+            process.wait()
+            ended_at = datetime.utcnow()
+            bg_db = SessionLocal()
+            try:
+                tracked_game = bg_db.query(Game).filter(Game.id == game.id).first()
+                if not tracked_game:
+                    return
+
+                total_playtime_seconds, play_session_count, last_played = accumulate_playtime(
+                    tracked_game.total_playtime_seconds,
+                    tracked_game.play_session_count,
+                    started_at,
+                    ended_at,
+                )
+                tracked_game.total_playtime_seconds = total_playtime_seconds
+                tracked_game.play_session_count = play_session_count
+                tracked_game.last_played = last_played
+                bg_db.commit()
+                bg_db.refresh(tracked_game)
+                persist_snapshot(tracked_game, bg_db)
+            except Exception:
+                bg_db.rollback()
+            finally:
+                bg_db.close()
+        finally:
+            _unregister_active_play_session(session_key)
+
+    Thread(target=_monitor_session, daemon=True).start()
+
+    payload = game.to_dict()
+    payload["is_running"] = True
+    payload["active_play_session_count"] = count_active_play_sessions(game.id)
+    return {
+        "message": f"Launched game: {os.path.basename(exe_path)}",
+        "action": "launch",
+        "tracking_enabled": True,
+        "game": payload,
+    }
+
+
+def open_game_folder_location(game: Game) -> dict[str, Any]:
+    path = os.path.normpath(game.folder_path)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=400, detail=f"Path does not exist: {path}")
+
+    if game.file_type == "archive" or (os.path.isfile(path) and path.lower().endswith(".exe")):
+        subprocess.Popen([r'explorer', '/select,', path])
+        return {"message": "Opened containing folder in Explorer", "action": "explorer"}
+
+    if os.path.isdir(path):
+        subprocess.Popen([r'explorer', path])
+        return {"message": "Opened folder in Explorer", "action": "explorer"}
+
+    subprocess.Popen([r'explorer', os.path.dirname(path)])
+    return {"message": "Opened containing folder in Explorer", "action": "explorer"}
+
+
+def parse_datetime_value(value: Any) -> datetime | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            return parsed.astimezone().replace(tzinfo=None)
+        return parsed
+    except Exception:
+        return None
+
+
+def count_library_export_work_units(games_root: Path) -> int:
+    if not games_root.exists() or not games_root.is_dir():
+        return 1
+
+    total = 1
+    for _, dir_names, file_names in os.walk(games_root):
+        total += len(dir_names) + len(file_names)
+    return max(1, total)
+
+
+def count_library_import_work_units(import_path: Path) -> int:
+    manifest = load_export_bundle_manifest(import_path)
+    with zipfile.ZipFile(import_path, "r") as bundle:
+        member_count = sum(
+            1
+            for info in bundle.infolist()
+            if info.filename.startswith("library/") and info.filename != "library/"
+        )
+    return max(1, member_count + len(manifest.get("games", [])))
+
+
+def find_game_for_import_record(db: Session, record: dict[str, Any], destination_path: Path | None = None) -> Game | None:
+    if destination_path is not None:
+        game = db.query(Game).filter(Game.folder_path == str(destination_path)).first()
+        if game:
+            return game
+
+    source_id = record.get("source_id")
+    if source_id:
+        game = db.query(Game).filter(Game.source_id == source_id).first()
+        if game:
+            return game
+
+    source_url = record.get("source_url")
+    if source_url:
+        game = db.query(Game).filter(Game.source_url == source_url).first()
+        if game:
+            return game
+
+    raw_name = record.get("raw_name")
+    if raw_name:
+        game = db.query(Game).filter(Game.raw_name == raw_name).first()
+        if game:
+            return game
+
+    title = record.get("title")
+    if title:
+        return db.query(Game).filter(Game.file_type == "wishlist", Game.title == title).first()
+
+    return None
+
+
+def sync_game_sources(game: Game, sources: list[dict[str, Any]] | None) -> None:
+    imported_sources = [source for source in list(sources or []) if source.get("source_type") and source.get("source_url")]
+    if not imported_sources:
+        return
+
+    existing_by_key = {(source.source_type, source.source_url): source for source in game.sources}
+    preferred_keys = {
+        (source.get("source_type"), source.get("source_url"))
+        for source in imported_sources
+        if source.get("is_preferred")
+    }
+
+    if preferred_keys:
+        for existing in game.sources:
+            existing.is_preferred = (existing.source_type, existing.source_url) in preferred_keys
+
+    for source_data in imported_sources:
+        key = (source_data.get("source_type"), source_data.get("source_url"))
+        existing = existing_by_key.get(key)
+        if existing:
+            if source_data.get("source_id") and not existing.source_id:
+                existing.source_id = source_data["source_id"]
+            if source_data.get("title_reported") and not existing.title_reported:
+                existing.title_reported = source_data["title_reported"]
+            if source_data.get("version_reported") and not existing.version_reported:
+                existing.version_reported = source_data["version_reported"]
+            existing.is_preferred = bool(source_data.get("is_preferred", existing.is_preferred))
+            continue
+
+        game.sources.append(
+            GameSource(
+                source_type=source_data["source_type"],
+                source_url=source_data["source_url"],
+                source_id=source_data.get("source_id"),
+                title_reported=source_data.get("title_reported"),
+                version_reported=source_data.get("version_reported"),
+                is_preferred=bool(source_data.get("is_preferred", False)),
+            )
+        )
+
+
+def sync_game_screenshots(game: Game, db: Session, screenshot_urls: list[str] | None) -> None:
+    existing_urls = {screenshot.url for screenshot in game.screenshots}
+    for screenshot_url in list(screenshot_urls or []):
+        if screenshot_url and screenshot_url not in existing_urls:
+            game.screenshots.append(Screenshot(url=screenshot_url))
+            existing_urls.add(screenshot_url)
+
+
+def sync_game_tags(game: Game, tag_names: list[str] | None) -> None:
+    existing_names = {tag.tag_name for tag in game.tags}
+    for tag_name in list(tag_names or []):
+        if tag_name and tag_name not in existing_names:
+            game.tags.append(Tag(tag_name=tag_name))
+            existing_names.add(tag_name)
+
+
+def sync_game_custom_tags(game: Game, tag_names: list[str] | None) -> None:
+    existing_names = {tag.tag_name for tag in game.custom_tags}
+    for tag_name in list(tag_names or []):
+        if tag_name and tag_name not in existing_names:
+            game.custom_tags.append(CustomTag(tag_name=tag_name))
+            existing_names.add(tag_name)
+
+
+def sync_game_journal_entries(game: Game, entries: list[dict[str, Any] | str] | None) -> None:
+    existing_entries = {entry.entry_text for entry in game.journal_entries}
+    for raw_entry in list(entries or []):
+        if isinstance(raw_entry, dict):
+            entry_text = str(raw_entry.get("text") or "").strip()
+            created_at = parse_datetime_value(raw_entry.get("created_at"))
+        else:
+            entry_text = str(raw_entry or "").strip()
+            created_at = None
+        if entry_text and entry_text not in existing_entries:
+            game.journal_entries.append(JournalEntry(entry_text=entry_text, created_at=created_at or datetime.utcnow()))
+            existing_entries.add(entry_text)
+
+
+def apply_import_record_to_game(game: Game, record: dict[str, Any], destination_path: Path | None, db: Session) -> None:
+    file_type = str(record.get("file_type") or game.file_type or ("wishlist" if destination_path is None else "folder"))
+    if destination_path is not None:
+        game.folder_path = str(destination_path)
+    elif not game.folder_path:
+        game.folder_path = str(record.get("folder_path") or record.get("raw_name") or f"wishlist_import_{int(datetime.utcnow().timestamp())}")
+
+    if record.get("title"):
+        game.title = record["title"]
+    if record.get("title_is_manual"):
+        game.title_is_manual = True
+    if record.get("raw_name"):
+        game.raw_name = record["raw_name"]
+    if record.get("category"):
+        game.category = record["category"]
+
+    game.file_type = file_type
+    game.archive_name = record.get("archive_name")
+    if record.get("size_bytes") not in (None, ""):
+        game.size_bytes = int(record.get("size_bytes") or 0)
+
+    if record.get("local_version_is_manual"):
+        game.local_version_is_manual = True
+        game.local_version = record.get("local_version")
+    elif record.get("local_version") and not game.local_version_is_manual:
+        game.local_version = record["local_version"]
+    if record.get("latest_version"):
+        game.latest_version = record["latest_version"]
+    if record.get("rating"):
+        game.rating = record["rating"]
+    if record.get("developer"):
+        game.developer = record["developer"]
+    if record.get("release_date"):
+        game.release_date = record["release_date"]
+    if record.get("cover_url"):
+        game.cover_url = record["cover_url"]
+    if record.get("description"):
+        game.description = record["description"]
+    if record.get("playing_progress"):
+        game.playing_progress = record["playing_progress"]
+    if record.get("user_score") not in (None, ""):
+        game.user_score = record["user_score"]
+    if record.get("total_playtime_seconds") not in (None, ""):
+        game.total_playtime_seconds = max(int(game.total_playtime_seconds or 0), int(record.get("total_playtime_seconds") or 0))
+    if record.get("play_session_count") not in (None, ""):
+        game.play_session_count = max(int(game.play_session_count or 0), int(record.get("play_session_count") or 0))
+
+    source_type = record.get("source_type")
+    if source_type:
+        game.source_type = source_type
+    if record.get("source_url"):
+        game.source_url = record["source_url"]
+    if record.get("source_id"):
+        game.source_id = record["source_id"]
+
+    if record.get("is_identified") is not None:
+        game.is_identified = bool(record.get("is_identified"))
+    elif game.source_type != "unknown" and (game.source_url or game.source_id):
+        game.is_identified = True
+
+    game.update_available = bool(record.get("update_available", game.update_available))
+    game.last_update_check_status = "never" if record.get("last_update_check_status") == "checking" else (record.get("last_update_check_status") or game.last_update_check_status or "never")
+    game.last_update_check_error = record.get("last_update_check_error")
+    last_update_check_at = parse_datetime_value(record.get("last_update_check_at"))
+    if last_update_check_at:
+        game.last_update_check_at = last_update_check_at
+    update_detected_at = parse_datetime_value(record.get("update_detected_at"))
+    if update_detected_at:
+        game.update_detected_at = update_detected_at
+    game.is_ignored = bool(record.get("is_ignored", game.is_ignored))
+    game.missing_scan_count = 0
+
+    added_at = parse_datetime_value(record.get("added_at"))
+    if added_at:
+        game.added_at = added_at
+    last_played = parse_datetime_value(record.get("last_played"))
+    if last_played and (not game.last_played or last_played > game.last_played):
+        game.last_played = last_played
+    last_seen_at = parse_datetime_value(record.get("last_seen_at"))
+    if last_seen_at:
+        game.last_seen_at = last_seen_at
+
+    sync_game_sources(game, record.get("sources"))
+    sync_game_screenshots(game, db, record.get("screenshots"))
+    sync_game_tags(game, record.get("tags"))
+    sync_game_custom_tags(game, record.get("custom_tags"))
+    sync_game_journal_entries(game, record.get("journal_entries"))
+
+    if file_type != "wishlist":
+        cleanup_redundant_wishlist_entries(db, game)
+
 # Pydantic Schemas
 class MetadataSyncPayload(BaseModel):
     game_id: Optional[int] = None
@@ -125,7 +490,7 @@ class LibraryMetadataFlushPayload(BaseModel):
     confirmation_phrase: str
 
 
-class SmartScanCandidatePayload(BaseModel):
+class MissingSourceCandidatePayload(BaseModel):
     source_type: str
     source_url: str
     source_id: Optional[str] = None
@@ -133,6 +498,14 @@ class SmartScanCandidatePayload(BaseModel):
     creator: Optional[str] = None
     cover: Optional[str] = None
     version: Optional[str] = None
+
+
+class LibraryExportPayload(BaseModel):
+    export_path: str
+
+
+class LibraryImportPayload(BaseModel):
+    import_path: str
 
 
 def try_apply_source_metadata(
@@ -165,6 +538,9 @@ def clear_game_scraped_metadata(game: Game, db: Session, *, preserve_identificat
     game.rating = None
     game.release_date = None
     game.update_available = False
+    game.update_detected_at = None
+    game.last_update_check_status = "never"
+    game.last_update_check_error = None
 
     if preserve_identification:
         game.is_identified = bool((game.source_url or game.source_id) and (game.source_type or "unknown") != "unknown")
@@ -190,6 +566,10 @@ class UpdateGamePayload(BaseModel):
     is_identified: Optional[bool] = None
     title: Optional[str] = None
 
+
+class GameVersionPayload(BaseModel):
+    local_version: Optional[str] = None
+
 class CustomTagPayload(BaseModel):
     tag_name: str
 
@@ -202,12 +582,16 @@ class TranslatePayload(BaseModel):
 @app.get("/api/stats")
 def get_stats(db: Session = Depends(get_db)):
     visible_clause = visible_library_entry_clause()
-    total = db.query(Game).filter(Game.file_type != "wishlist", Game.is_ignored == False, visible_clause).count()
+    visible_games = db.query(Game).filter(Game.file_type != "wishlist", Game.is_ignored == False, visible_clause).all()
+    total = len(visible_games)
+    linked = sum(1 for game in visible_games if has_usable_linked_source(game))
+    unlinked = total - linked
     identified = db.query(Game).filter(Game.file_type != "wishlist", Game.is_identified == True, Game.is_ignored == False, visible_clause).count()
     unidentified = db.query(Game).filter(Game.file_type != "wishlist", Game.is_identified == False, Game.is_ignored == False, visible_clause).count()
     installed = db.query(Game).filter(Game.file_type.in_(["exe", "folder"]), Game.is_ignored == False, visible_clause).count()
     archives = db.query(Game).filter(Game.file_type == "archive", Game.is_ignored == False, visible_clause).count()
     wishlist = db.query(Game).filter(Game.file_type == "wishlist", Game.is_ignored == False, visible_clause).count()
+    updates_available = db.query(Game).filter(Game.update_available == True, Game.is_ignored == False, visible_clause).count()
     s = get_settings()
     return {
         "total": total,
@@ -216,27 +600,44 @@ def get_stats(db: Session = Depends(get_db)):
         "installed": installed,
         "archives": archives,
         "wishlist": wishlist,
+        "updates_available": updates_available,
+        "total_visible_games": total,
+        "linked_games": linked,
+        "unlinked_games": unlinked,
+        "games_with_updates": updates_available,
+        "last_full_metadata_refresh": s.get("last_full_metadata_refresh_at"),
+        "last_library_update_check": s.get("last_game_update_check_at"),
+        "automatic_game_update_checks": s.get("automatic_game_update_checks", True),
         "games_dir": s.get("games_dir", ""),
+        "games_dirs": list(s.get("games_dirs", [])),
+        "primary_games_dir": s.get("games_dir", ""),
         "extension_dir": EXTENSION_DIR
     }
 
 class SettingsPayload(BaseModel):
     games_dir: Optional[str] = None
+    games_dirs: Optional[List[str]] = None
     archive_mode: Optional[str] = None
     startup_scan: Optional[bool] = None
     missing_grace_scans: Optional[int] = None
-    auto_update: Optional[bool] = None
+    automatic_game_update_checks: Optional[bool] = None
+    game_update_check_interval_days: Optional[int] = None
     preferred_source: Optional[str] = None
+    theme_mode: Optional[str] = None
+    accent_color: Optional[str] = None
 
 @app.get("/api/settings")
 def get_app_settings():
     s = get_settings()
     s["extension_dir"] = EXTENSION_DIR
+    s["primary_games_dir"] = s.get("games_dir", "")
     return s
 
 @app.post("/api/settings")
 def update_app_settings(payload: SettingsPayload, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     data = {}
+    if payload.games_dirs is not None:
+        data["games_dirs"] = payload.games_dirs
     if payload.games_dir is not None:
         data["games_dir"] = payload.games_dir
     if payload.archive_mode is not None:
@@ -245,20 +646,74 @@ def update_app_settings(payload: SettingsPayload, background_tasks: BackgroundTa
         data["startup_scan"] = payload.startup_scan
     if payload.missing_grace_scans is not None:
         data["missing_grace_scans"] = max(1, int(payload.missing_grace_scans))
-    if payload.auto_update is not None:
-        data["auto_update"] = payload.auto_update
+    if payload.automatic_game_update_checks is not None:
+        data["automatic_game_update_checks"] = payload.automatic_game_update_checks
+    if payload.game_update_check_interval_days is not None:
+        data["game_update_check_interval_days"] = max(1, int(payload.game_update_check_interval_days))
     if payload.preferred_source is not None:
         data["preferred_source"] = payload.preferred_source
+    if payload.theme_mode is not None:
+        data["theme_mode"] = payload.theme_mode
+    if payload.accent_color is not None:
+        data["accent_color"] = payload.accent_color
     updated = save_settings(data)
-    
-    if payload.games_dir is not None:
-        try:
-            background_tasks.add_task(run_ingestion)
-        except Exception:
-            pass
-            
+
     updated["extension_dir"] = EXTENSION_DIR
+    updated["primary_games_dir"] = updated.get("games_dir", "")
     return {"message": "Settings saved successfully", "settings": updated}
+
+
+@app.post("/api/library/export")
+def export_library(payload: LibraryExportPayload, background_tasks: BackgroundTasks):
+    export_path = str(payload.export_path or "").strip()
+    if not export_path:
+        raise HTTPException(status_code=400, detail="A destination .zip path is required for library export")
+
+    games_root = get_games_dir().resolve()
+    if not games_root.exists() or not games_root.is_dir():
+        raise HTTPException(status_code=400, detail=f"Configured library directory does not exist: {games_root}")
+
+    running_job = any_running_job()
+    if running_job and running_job.get("job_key") != EXPORT_LIBRARY_JOB_KEY:
+        raise HTTPException(status_code=409, detail=f'Library job "{running_job.get("label") or running_job.get("job_key")}" is already running')
+
+    current = get_job(EXPORT_LIBRARY_JOB_KEY)
+    if current.get("status") == "running":
+        return current
+
+    total = count_library_export_work_units(games_root)
+    state = start_job("export-library", total, "Exporting portable library package")
+    set_job_context(EXPORT_LIBRARY_JOB_KEY, result={"output_path": export_path})
+    background_tasks.add_task(run_library_export_job, export_path)
+    return state
+
+
+@app.post("/api/library/import")
+def import_library(payload: LibraryImportPayload, background_tasks: BackgroundTasks):
+    import_path_raw = str(payload.import_path or "").strip()
+    if not import_path_raw:
+        raise HTTPException(status_code=400, detail="An exported .zip package path is required for library import")
+    import_path = Path(import_path_raw).expanduser()
+    if not import_path.exists() or not import_path.is_file():
+        raise HTTPException(status_code=400, detail=f"Import package not found: {import_path}")
+
+    running_job = any_running_job()
+    if running_job and running_job.get("job_key") != IMPORT_LIBRARY_JOB_KEY:
+        raise HTTPException(status_code=409, detail=f'Library job "{running_job.get("label") or running_job.get("job_key")}" is already running')
+
+    current = get_job(IMPORT_LIBRARY_JOB_KEY)
+    if current.get("status") == "running":
+        return current
+
+    try:
+        total = count_library_import_work_units(import_path.resolve())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid XDir library export package: {exc}") from exc
+
+    state = start_job("import-library", total, "Importing portable library package")
+    set_job_context(IMPORT_LIBRARY_JOB_KEY, result={"input_path": str(import_path.resolve())})
+    background_tasks.add_task(run_library_import_job, str(import_path.resolve()))
+    return state
 
 @app.get("/api/tags/all")
 def get_all_tags(db: Session = Depends(get_db)):
@@ -353,6 +808,70 @@ def get_game(game_id: int, db: Session = Depends(get_db)):
         
     return data
 
+
+@app.patch("/api/games/{game_id}/version")
+def update_game_version(game_id: int, payload: GameVersionPayload, db: Session = Depends(get_db)):
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    clean_version = str(payload.local_version or "").strip()
+    game.local_version = clean_version or None
+    game.local_version_is_manual = True
+    game.last_update_check_error = None
+    if game.latest_version:
+        apply_comparison_to_game(game)
+    else:
+        game.update_available = False
+        game.update_detected_at = None
+        game.last_update_check_status = "remote_version_unavailable" if game.last_update_check_at else "never"
+    db.commit()
+    db.refresh(game)
+    persist_snapshot(game, db)
+    return {"message": "Local version updated", "game": game.to_dict()}
+
+
+@app.post("/api/games/{game_id}/mark-latest-installed")
+def mark_latest_installed(game_id: int, db: Session = Depends(get_db)):
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if not str(game.latest_version or "").strip():
+        raise HTTPException(status_code=400, detail="No latest online version is available to mark as installed")
+
+    game.local_version = game.latest_version
+    game.local_version_is_manual = True
+    game.update_available = False
+    game.update_detected_at = None
+    game.last_update_check_status = "up_to_date"
+    game.last_update_check_error = None
+    db.commit()
+    db.refresh(game)
+    persist_snapshot(game, db)
+    return {"message": "Latest version marked as installed. No game files were changed.", "game": game.to_dict()}
+
+
+@app.post("/api/games/{game_id}/check-update")
+def trigger_game_update_check(game_id: int, db: Session = Depends(get_db)):
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    with UPDATE_CHECK_JOB_START_LOCK:
+        if get_job(UPDATE_CHECK_JOB_KEY).get("status") == "running":
+            raise HTTPException(status_code=409, detail="A whole-library update check is already running")
+        with ACTIVE_UPDATE_CHECK_GAMES_LOCK:
+            if game_id in ACTIVE_UPDATE_CHECK_GAME_IDS:
+                raise HTTPException(status_code=409, detail="This game is already being checked")
+            ACTIVE_UPDATE_CHECK_GAME_IDS.add(game_id)
+    try:
+        result = check_game_update(game, db)
+        db.refresh(game)
+        persist_snapshot(game, db)
+        return {"message": "Update check completed", "result": result.to_dict(), "game": game.to_dict()}
+    finally:
+        with ACTIVE_UPDATE_CHECK_GAMES_LOCK:
+            ACTIVE_UPDATE_CHECK_GAME_IDS.discard(game_id)
+
 @app.patch("/api/games/{game_id}")
 def update_game(game_id: int, payload: UpdateGamePayload, db: Session = Depends(get_db)):
     game = db.query(Game).filter(Game.id == game_id).first()
@@ -366,7 +885,8 @@ def update_game(game_id: int, payload: UpdateGamePayload, db: Session = Depends(
     if payload.is_identified is not None:
         game.is_identified = payload.is_identified
     if payload.title is not None:
-        game.title = payload.title
+        game.title = payload.title.strip()
+        game.title_is_manual = True
         
     db.commit()
     persist_snapshot(game, db)
@@ -434,30 +954,29 @@ def launch_game(game_id: int, db: Session = Depends(get_db)):
         
     try:
         if game.file_type == "archive":
-            subprocess.Popen([r'explorer', '/select,', path])
-            return {"message": "Opened containing folder in Explorer", "action": "explorer"}
-        else:
-            if os.path.isfile(path) and path.lower().endswith('.exe'):
-                exe_path = path
-            else:
-                exe_path = None
-                if os.path.isdir(path):
-                    for f in os.listdir(path):
-                        if f.lower().endswith('.exe') and not f.lower().startswith('unins'):
-                            exe_path = os.path.join(path, f)
-                            break
-                    if not exe_path:
-                        subprocess.Popen([r'explorer', path])
-                        return {"message": "Opened folder in Explorer (no direct exe found)", "action": "explorer"}
-                else:
-                    subprocess.Popen([r'explorer', os.path.dirname(path)])
-                    return {"message": "Opened folder in Explorer", "action": "explorer"}
-                    
-            if exe_path:
-                os.startfile(exe_path)
-                return {"message": f"Launched game: {os.path.basename(exe_path)}", "action": "launch"}
+            return open_game_folder_location(game)
+
+        exe_path = choose_launch_executable(path)
+        if exe_path:
+            return launch_tracked_game_process(game, str(exe_path), db)
+
+        return open_game_folder_location(game)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to launch/open: {str(e)}")
+
+
+@app.post("/api/games/{game_id}/open-folder")
+def open_game_folder(game_id: int, db: Session = Depends(get_db)):
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    try:
+        return open_game_folder_location(game)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open folder: {str(e)}")
 
 @app.post("/api/games/{game_id}/link")
 def link_game(game_id: int, payload: LinkGamePayload, db: Session = Depends(get_db)):
@@ -769,7 +1288,7 @@ def link_wishlist_to_picked_local(game_id: int, payload: PickedLocalPathPayload,
         target.file_type = scanned_item["file_type"]
         target.archive_name = scanned_item["archive_name"]
         target.size_bytes = scanned_item["size_bytes"]
-        target.local_version = scanned_item["local_version"] or target.local_version
+        apply_scanned_local_version(target, scanned_item["local_version"])
         target.last_seen_at = datetime.utcnow()
         target.missing_scan_count = 0
     else:
@@ -870,7 +1389,7 @@ def sync_metadata(payload: MetadataSyncPayload, db: Session = Depends(get_db)):
         else:
             raise HTTPException(status_code=404, detail="Game not found for metadata sync")
             
-    if payload.title:
+    if payload.title and not game.title_is_manual:
         game.title = payload.title
         
     if payload.cover_url:
@@ -885,16 +1404,8 @@ def sync_metadata(payload: MetadataSyncPayload, db: Session = Depends(get_db)):
         game.description = payload.description
         
     if payload.latest_version:
-        game.latest_version = payload.latest_version
-        if game.local_version:
-            clean_local = game.local_version.lower().replace('v', '').replace('ver', '').strip()
-            clean_latest = payload.latest_version.lower().replace('v', '').replace('ver', '').strip()
-            if clean_latest != clean_local and clean_latest > clean_local:
-                game.update_available = True
-            else:
-                game.update_available = False
-        else:
-            game.update_available = False
+        game.latest_version = payload.latest_version.strip()
+        apply_comparison_to_game(game, checked_at=utc_now())
             
     if payload.screenshots:
         existing_urls = {s.url for s in game.screenshots}
@@ -1049,6 +1560,198 @@ def get_extension_status():
     }
 
 
+def run_library_export_job(export_path: str):
+    bg_db = SessionLocal()
+    try:
+        games_root = get_games_dir().resolve()
+        if not games_root.exists() or not games_root.is_dir():
+            raise FileNotFoundError(f"Configured library directory does not exist: {games_root}")
+
+        games = bg_db.query(Game).filter(Game.is_ignored == False).all()
+        manifest = build_export_manifest(games_root, games, get_settings(), load_source_map_data())
+
+        bundle_path = write_export_bundle(
+            export_path,
+            games_root,
+            manifest,
+            progress_callback=lambda completed, total, current_name, detail: update_job(
+                EXPORT_LIBRARY_JOB_KEY,
+                completed,
+                current_name,
+                detail,
+            ),
+        )
+
+        set_job_context(
+            EXPORT_LIBRARY_JOB_KEY,
+            result={
+                "output_path": str(bundle_path),
+                "game_count": len(manifest.get("games", [])),
+                "excluded_local_records": manifest.get("stats", {}).get("excluded_local_records", 0),
+            },
+        )
+        finish_job(
+            EXPORT_LIBRARY_JOB_KEY,
+            f"Exported {len(manifest.get('games', []))} library entries and packaged {games_root} to {bundle_path}.",
+        )
+    except Exception as exc:
+        fail_job(EXPORT_LIBRARY_JOB_KEY, str(exc))
+    finally:
+        bg_db.close()
+
+
+def run_library_import_job(import_path: str):
+    from backend.scraper import fetch_game_metadata
+
+    bg_db = SessionLocal()
+    try:
+        package_path = Path(import_path).expanduser().resolve()
+        manifest = load_export_bundle_manifest(package_path)
+        games_root = get_games_dir().resolve()
+        extraction_units = 0
+        with zipfile.ZipFile(package_path, "r") as bundle:
+            extraction_units = sum(
+                1
+                for info in bundle.infolist()
+                if info.filename.startswith("library/") and info.filename != "library/"
+            )
+
+        extraction_stats = extract_export_bundle(
+            package_path,
+            games_root,
+            progress_callback=lambda completed, total, current_name, detail: update_job(
+                IMPORT_LIBRARY_JOB_KEY,
+                completed,
+                current_name,
+                detail,
+            ),
+        )
+        current_step = extraction_units
+
+        merged_source_entries = merge_source_map_data(manifest.get("source_map"))
+
+        portable_settings = manifest.get("settings") or {}
+        restored_settings = {}
+        configured_roots = [str(root).strip() for root in list(manifest.get("configured_roots") or []) if str(root).strip()]
+        for key in (
+            "archive_mode",
+            "startup_scan",
+            "missing_grace_scans",
+            "preferred_source",
+            "automatic_game_update_checks",
+            "game_update_check_interval_days",
+            "last_game_update_check_at",
+        ):
+            if portable_settings.get(key) is not None:
+                restored_settings[key] = portable_settings[key]
+        if configured_roots:
+            restored_settings["games_dirs"] = [str(games_root), *configured_roots[1:]]
+        if restored_settings:
+            save_settings(restored_settings)
+
+        ingestion_result = run_ingestion(bg_db)
+        bg_db.expire_all()
+
+        imported_records = 0
+        skipped_records = 0
+        metadata_refreshed = 0
+        metadata_failed = 0
+
+        for index, record in enumerate(list(manifest.get("games", [])), start=1):
+            record_file_type = str(record.get("file_type") or "folder")
+            destination_path = None
+            if record_file_type != "wishlist":
+                relative_path = record.get("relative_path")
+                if relative_path:
+                    destination_path = resolve_import_destination(games_root, relative_path)
+                else:
+                    absolute_folder_path = str(record.get("folder_path") or "").strip()
+                    if absolute_folder_path and is_path_within_games_dirs(absolute_folder_path):
+                        candidate_path = Path(absolute_folder_path).expanduser()
+                        if candidate_path.exists():
+                            try:
+                                destination_path = candidate_path.resolve()
+                            except Exception:
+                                destination_path = candidate_path.absolute()
+                if destination_path is None:
+                    skipped_records += 1
+                    current_step += 1
+                    update_job(
+                        IMPORT_LIBRARY_JOB_KEY,
+                        current_step,
+                        str(record.get("title") or record.get("raw_name") or "Skipped local entry"),
+                        "Skipping a local record whose files are not available in the imported primary root or configured extra roots.",
+                    )
+                    continue
+
+            game = find_game_for_import_record(bg_db, record, destination_path)
+            if game is None:
+                fallback_folder_path = str(destination_path) if destination_path is not None else str(
+                    record.get("folder_path") or record.get("raw_name") or f"wishlist_import_{int(time.time())}_{index}"
+                )
+                game = Game(
+                    title=str(record.get("title") or record.get("raw_name") or "Imported Game"),
+                    raw_name=str(record.get("raw_name") or Path(fallback_folder_path).name),
+                    category=str(record.get("category") or "Imported"),
+                    folder_path=fallback_folder_path,
+                    file_type=record_file_type,
+                )
+                bg_db.add(game)
+                bg_db.flush()
+
+            apply_import_record_to_game(game, record, destination_path, bg_db)
+            bg_db.commit()
+            bg_db.refresh(game)
+            persist_snapshot(game, bg_db)
+
+            imported_records += 1
+            current_step += 1
+            update_job(
+                IMPORT_LIBRARY_JOB_KEY,
+                current_step,
+                game.title or game.raw_name,
+                "Restoring library records, source links, and user data...",
+            )
+
+            if needs_metadata_refresh(record):
+                try:
+                    game = fetch_game_metadata(game, bg_db, force_overwrite=False)
+                    metadata_refreshed += 1
+                except Exception:
+                    bg_db.rollback()
+                    metadata_failed += 1
+
+        duplicates_removed = deduplicate_games(bg_db)
+        set_job_context(
+            IMPORT_LIBRARY_JOB_KEY,
+            result={
+                "input_path": str(package_path),
+                "extracted_files": extraction_stats.get("extracted_files", 0),
+                "skipped_files": extraction_stats.get("skipped_files", 0),
+                "created_dirs": extraction_stats.get("created_dirs", 0),
+                "imported_records": imported_records,
+                "skipped_records": skipped_records,
+                "metadata_refreshed": metadata_refreshed,
+                "metadata_failed": metadata_failed,
+                "merged_source_entries": merged_source_entries,
+                "duplicates_removed": duplicates_removed,
+                "ingestion": ingestion_result,
+            },
+        )
+        finish_job(
+            IMPORT_LIBRARY_JOB_KEY,
+            "Imported portable library package into the configured games directory. "
+            f"Restored {imported_records} records, extracted {extraction_stats.get('extracted_files', 0)} files, "
+            f"skipped {extraction_stats.get('skipped_files', 0)} existing files, refreshed metadata for {metadata_refreshed} games, "
+            f"and merged {merged_source_entries} durable source snapshots.",
+        )
+    except Exception as exc:
+        bg_db.rollback()
+        fail_job(IMPORT_LIBRARY_JOB_KEY, str(exc))
+    finally:
+        bg_db.close()
+
+
 def run_rematch_f95zone_job():
     from backend.scraper import rematch_and_scrape_f95zone
 
@@ -1178,16 +1881,161 @@ def run_tracked_metadata_scan_job(job_key: str, scan_runner):
         bg_db.close()
 
 
-def run_smart_metadata_scan_job():
-    from backend.smart_scan import run_smart_metadata_scan
-
-    run_tracked_metadata_scan_job("smart-scan", run_smart_metadata_scan)
-
-
 def run_missing_source_metadata_scan_job():
-    from backend.smart_scan import run_missing_source_metadata_scan
+    from backend.smart_scan import run_missing_source_scan
 
-    run_tracked_metadata_scan_job("missing-source-scan", run_missing_source_metadata_scan)
+    run_tracked_metadata_scan_job("missing-source-scan", run_missing_source_scan)
+
+
+def run_refresh_all_metadata_job():
+    from backend.metadata_refresh import refresh_all_metadata
+
+    bg_db = SessionLocal()
+    try:
+        def progress_callback(snapshot: Dict[str, Any]):
+            update_job(
+                REFRESH_ALL_METADATA_JOB_KEY,
+                snapshot.get("processed", 0),
+                snapshot.get("current_title") or "",
+                f"Refreshing metadata for {snapshot.get('current_title') or 'linked game'}...",
+            )
+            set_job_context(REFRESH_ALL_METADATA_JOB_KEY, **snapshot)
+
+        result = refresh_all_metadata(
+            bg_db,
+            progress_callback=progress_callback,
+            should_cancel=lambda: is_job_cancel_requested(REFRESH_ALL_METADATA_JOB_KEY),
+        )
+        set_job_context(
+            REFRESH_ALL_METADATA_JOB_KEY,
+            result=result,
+            current_game_id=None,
+            current_title="",
+            current_source="",
+            current_index=result.get("processed", 0),
+            **{key: result.get(key, 0) for key in (
+                "processed",
+                "refreshed_count",
+                "skipped_count",
+                "unsupported_count",
+                "failed_count",
+            )},
+        )
+        if not result.get("cancelled"):
+            save_settings({"last_full_metadata_refresh_at": utc_now().isoformat()})
+        update_job(
+            REFRESH_ALL_METADATA_JOB_KEY,
+            result.get("processed", 0),
+            "",
+            "Cancelled." if result.get("cancelled") else "Completed.",
+        )
+        if result.get("cancelled"):
+            cancel_job(REFRESH_ALL_METADATA_JOB_KEY, result["summary"])
+        else:
+            finish_job(REFRESH_ALL_METADATA_JOB_KEY, result["summary"])
+    except Exception as exc:
+        bg_db.rollback()
+        fail_job(REFRESH_ALL_METADATA_JOB_KEY, str(exc)[:300])
+    finally:
+        bg_db.close()
+
+
+def list_update_check_targets(db: Session) -> list[Game]:
+    candidates = db.query(Game).filter(
+        Game.is_ignored == False,
+        Game.file_type.in_(["exe", "folder", "archive"]),
+        or_(Game.missing_scan_count == 0, Game.missing_scan_count.is_(None)),
+    ).all()
+    return [game for game in candidates if resolve_update_source(game).source_type != "unknown"]
+
+
+def run_update_check_job():
+    bg_db = SessionLocal()
+    try:
+        targets = list_update_check_targets(bg_db)
+
+        def progress_callback(snapshot: Dict[str, Any]):
+            update_job(
+                UPDATE_CHECK_JOB_KEY,
+                snapshot.get("processed", 0),
+                snapshot.get("current_title") or "",
+                f"Checking {snapshot.get('current_title') or 'linked game'}...",
+            )
+            set_job_context(UPDATE_CHECK_JOB_KEY, **snapshot)
+
+        def checker(game: Game, session: Session):
+            result = check_game_update(game, session)
+            try:
+                session.refresh(game)
+                persist_snapshot(game, session)
+            except Exception:
+                pass
+            return result
+
+        result = check_library_updates(
+            bg_db,
+            games=targets,
+            progress_callback=progress_callback,
+            should_cancel=lambda: is_job_cancel_requested(UPDATE_CHECK_JOB_KEY),
+            checker=checker,
+        )
+        set_job_context(
+            UPDATE_CHECK_JOB_KEY,
+            result=result,
+            current_game_id=None,
+            current_title="",
+            current_source="",
+            **{key: result.get(key, 0) for key in (
+                "updates_found",
+                "up_to_date_count",
+                "unknown_local_count",
+                "remote_unavailable_count",
+                "unsupported_count",
+                "version_differs_count",
+                "failed_count",
+            )},
+        )
+        if not result.get("cancelled") or result.get("processed", 0) > 0:
+            save_settings({"last_game_update_check_at": utc_now().isoformat()})
+        update_job(UPDATE_CHECK_JOB_KEY, result.get("processed", 0), "", "Completed.")
+        if result.get("cancelled"):
+            cancel_job(UPDATE_CHECK_JOB_KEY, result["summary"])
+        else:
+            finish_job(UPDATE_CHECK_JOB_KEY, result["summary"])
+    except Exception as exc:
+        bg_db.rollback()
+        fail_job(UPDATE_CHECK_JOB_KEY, str(exc)[:300])
+    finally:
+        bg_db.close()
+
+
+def start_update_check_job_in_thread() -> bool:
+    with UPDATE_CHECK_JOB_START_LOCK:
+        running_job = any_running_job()
+        if running_job and running_job.get("job_key") != UPDATE_CHECK_JOB_KEY:
+            return False
+        if get_job(UPDATE_CHECK_JOB_KEY).get("status") == "running":
+            return False
+        with ACTIVE_UPDATE_CHECK_GAMES_LOCK:
+            if ACTIVE_UPDATE_CHECK_GAME_IDS:
+                return False
+        with SessionLocal() as count_db:
+            total = len(list_update_check_targets(count_db))
+        start_job(UPDATE_CHECK_JOB_KEY, total, "Checking linked games for updates")
+        set_job_context(
+            UPDATE_CHECK_JOB_KEY,
+            processed=0,
+            updates_found=0,
+            up_to_date_count=0,
+            unknown_local_count=0,
+            remote_unavailable_count=0,
+            unsupported_count=0,
+            version_differs_count=0,
+            failed_count=0,
+            result=None,
+        )
+    Thread(target=run_update_check_job, daemon=True).start()
+    return True
 
 @app.get("/api/search/f95zone")
 def search_f95zone_api(query: str):
@@ -1241,11 +2089,65 @@ def trigger_fetch_metadata(game_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/library/fetch-all-metadata")
-def trigger_fetch_all_metadata(db: Session = Depends(get_db)):
-    from backend.scraper import fetch_all_missing_metadata
-    count = fetch_all_missing_metadata(db)
-    return {"message": f"Successfully scraped metadata for {count} games!"}
+@app.post("/api/library/check-updates")
+def trigger_library_update_check(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    with UPDATE_CHECK_JOB_START_LOCK:
+        running_job = any_running_job()
+        if running_job and running_job.get("job_key") != UPDATE_CHECK_JOB_KEY:
+            raise HTTPException(status_code=409, detail=f'Library job "{running_job.get("label") or running_job.get("job_key")}" is already running')
+        current = get_job(UPDATE_CHECK_JOB_KEY)
+        if current.get("status") == "running":
+            return current
+        with ACTIVE_UPDATE_CHECK_GAMES_LOCK:
+            if ACTIVE_UPDATE_CHECK_GAME_IDS:
+                raise HTTPException(status_code=409, detail="A single-game update check is already running")
+
+        total = len(list_update_check_targets(db))
+        state = start_job(UPDATE_CHECK_JOB_KEY, total, "Checking linked games for updates")
+        set_job_context(
+            UPDATE_CHECK_JOB_KEY,
+            processed=0,
+            updates_found=0,
+            up_to_date_count=0,
+            unknown_local_count=0,
+            remote_unavailable_count=0,
+            unsupported_count=0,
+            version_differs_count=0,
+            failed_count=0,
+            result=None,
+        )
+    background_tasks.add_task(run_update_check_job)
+    return state
+
+
+@app.post("/api/library/refresh-all-metadata")
+def trigger_refresh_all_metadata(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    from backend.metadata_refresh import list_metadata_refresh_targets
+
+    running_job = any_running_job()
+    if running_job and running_job.get("job_key") != REFRESH_ALL_METADATA_JOB_KEY:
+        raise HTTPException(status_code=409, detail=f'Library job "{running_job.get("label") or running_job.get("job_key")}" is already running')
+    current = get_job(REFRESH_ALL_METADATA_JOB_KEY)
+    if current.get("status") == "running":
+        return current
+
+    total = len(list_metadata_refresh_targets(db))
+    state = start_job(REFRESH_ALL_METADATA_JOB_KEY, total, "Refreshing metadata from linked sources")
+    set_job_context(
+        REFRESH_ALL_METADATA_JOB_KEY,
+        processed=0,
+        current_index=0,
+        current_game_id=None,
+        current_title="",
+        current_source="",
+        refreshed_count=0,
+        skipped_count=0,
+        unsupported_count=0,
+        failed_count=0,
+        result=None,
+    )
+    background_tasks.add_task(run_refresh_all_metadata_job)
+    return state
 
 @app.get("/api/library/jobs/{job_key}")
 def get_library_job(job_key: str):
@@ -1255,7 +2157,7 @@ def get_library_job(job_key: str):
 def cancel_library_job(job_key: str):
     return request_job_cancel(job_key)
 
-@app.post("/api/library/rematch-f95zone")
+@app.post("/api/library/rematch-f95zone", deprecated=True)
 def trigger_rematch_f95zone(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     running_job = any_running_job()
     if running_job and running_job.get("job_key") != "rematch-f95zone":
@@ -1270,7 +2172,7 @@ def trigger_rematch_f95zone(background_tasks: BackgroundTasks, db: Session = Dep
     background_tasks.add_task(run_rematch_f95zone_job)
     return state
 
-@app.post("/api/library/fix-metadata")
+@app.post("/api/library/fix-metadata", deprecated=True)
 def trigger_fix_metadata(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     running_job = any_running_job()
     if running_job and running_job.get("job_key") != "fix-metadata":
@@ -1302,61 +2204,6 @@ def trigger_flush_metadata(payload: LibraryMetadataFlushPayload, background_task
     state = start_job("flush-metadata", total, "Flushing scraped metadata")
     background_tasks.add_task(run_flush_metadata_job)
     return state
-
-@app.post("/api/library/smart-scan")
-def trigger_smart_metadata_scan(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    from backend.smart_scan import list_smart_scan_targets
-
-    running_job = any_running_job()
-    if running_job and running_job.get("job_key") != "smart-scan":
-        raise HTTPException(status_code=409, detail=f'Library job "{running_job.get("label") or running_job.get("job_key")}" is already running')
-
-    current = get_job("smart-scan")
-    if current.get("status") == "running":
-        return current
-
-    total = len(list_smart_scan_targets(db))
-    state = start_job("smart-scan", total, "Smart metadata scan")
-    set_job_context(
-        "smart-scan",
-        result={
-            "cancelled": False,
-            "processed": 0,
-            "total": total,
-            "remaining": total,
-            "matched": 0,
-            "manual_review": 0,
-            "not_found": 0,
-            "failed": 0,
-            "review_items": [],
-            "summary": "",
-        },
-    )
-    if total == 0:
-        set_job_context(
-            "smart-scan",
-            result={
-                "cancelled": False,
-                "processed": 0,
-                "total": 0,
-                "remaining": 0,
-                "matched": 0,
-                "manual_review": 0,
-                "not_found": 0,
-                "failed": 0,
-                "review_items": [],
-                "summary": "Smart scan complete. 0 games processed, 0 metadata entries applied automatically, 0 need review, 0 not found, 0 failed.",
-            },
-        )
-        finish_job(
-            "smart-scan",
-            "Smart scan complete. 0 games processed, 0 metadata entries applied automatically, 0 need review, 0 not found, 0 failed.",
-        )
-        return get_job("smart-scan")
-
-    background_tasks.add_task(run_smart_metadata_scan_job)
-    return state
-
 
 @app.post("/api/library/missing-source-scan")
 def trigger_missing_source_metadata_scan(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -1412,19 +2259,19 @@ def trigger_missing_source_metadata_scan(background_tasks: BackgroundTasks, db: 
     background_tasks.add_task(run_missing_source_metadata_scan_job)
     return state
 
-@app.post("/api/library/smart-scan/review/{game_id}/apply")
-def apply_smart_scan_review_candidate(
+@app.post("/api/library/missing-source-scan/review/{game_id}/apply")
+def apply_missing_source_review_candidate(
     game_id: int,
-    payload: SmartScanCandidatePayload,
+    payload: MissingSourceCandidatePayload,
     db: Session = Depends(get_db),
 ):
-    from backend.smart_scan import apply_smart_scan_candidate
+    from backend.smart_scan import apply_missing_source_candidate
 
     game = db.query(Game).filter(Game.id == game_id).first()
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    applied = apply_smart_scan_candidate(
+    applied = apply_missing_source_candidate(
         game,
         db,
         {
@@ -1446,7 +2293,14 @@ def apply_smart_scan_review_candidate(
     }
     if applied.get("warning"):
         response["warning"] = applied["warning"]
+    remove_job_result_item("missing-source-scan", "review_items", game_id)
     return response
+
+
+@app.post("/api/library/missing-source-scan/review/{game_id}/skip")
+def skip_missing_source_review_candidate(game_id: int):
+    remove_job_result_item("missing-source-scan", "review_items", game_id)
+    return {"status": "skipped", "game_id": game_id}
 
 @app.post("/api/translate")
 def translate_texts(payload: TranslatePayload):

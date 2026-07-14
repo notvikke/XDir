@@ -36,7 +36,7 @@
             const pillText = isExe ? 'INSTALLED' : 'ARCHIVE';
 
             let updateHtml = '';
-            if (game.update_available || (metadata.latest_version && metadata.latest_version !== game.local_version)) {
+            if (game.update_available) {
                 updateHtml = `<span class="xdir-status-pill xdir-pill-update">UPDATE AVAILABLE</span>`;
             }
 
@@ -49,7 +49,7 @@
                         ${updateHtml}
                     </div>
                     <div class="xdir-subtitle">
-                        ${game.folder_path} | Local: ${game.local_version || 'v1.0'}
+                        ${game.folder_path} | Local: ${game.local_version || 'Unknown'}
                     </div>
                 </div>
             `;

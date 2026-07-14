@@ -82,6 +82,53 @@ test('settings expose startup scan and directory stability controls', () => {
     appPy.includes("if settings.get('startup_scan', True):"),
     'Expected startup ingestion to be gated by the startup_scan setting.',
   );
+  assert(
+    configPy.includes('"theme_mode": "midnight"'),
+    'Expected theme_mode to be a persisted appearance setting.',
+  );
+  assert(
+    configPy.includes('"accent_color": "blue"'),
+    'Expected accent_color to be a persisted appearance setting.',
+  );
+  assert(
+    mainPy.includes('theme_mode: Optional[str] = None'),
+    'Expected settings payload to accept theme_mode.',
+  );
+  assert(
+    mainPy.includes('accent_color: Optional[str] = None'),
+    'Expected settings payload to accept accent_color.',
+  );
+});
+
+test('settings expose weekly game update checks without reusing app auto-update', () => {
+  assert(configPy.includes('"automatic_game_update_checks": True'), 'Expected a dedicated automatic game-update setting.');
+  assert(configPy.includes('"game_update_check_interval_days": 7'), 'Expected the update-check interval to remain configurable.');
+  assert(mainPy.includes('automatic_game_update_checks: Optional[bool] = None'), 'Expected settings API payload support for the automatic toggle.');
+  assert(html.includes('id="toggle-automatic-game-update-checks"'), 'Expected the dedicated Settings toggle.');
+  assert(js.includes('automatic_game_update_checks:'), 'Expected the Settings payload to save the dedicated toggle.');
+});
+
+test('library settings promote a primary-plus-extra directory model without breaking legacy configs', () => {
+  assert(
+    configPy.includes('def get_games_dirs()'),
+    'Expected backend/config.py to expose a helper that returns the configured library roots.',
+  );
+  assert(
+    configPy.includes('"games_dirs"'),
+    'Expected settings defaults or normalization to persist a games_dirs list.',
+  );
+  assert(
+    mainPy.includes('games_dirs: Optional[List[str]] = None'),
+    'Expected the settings payload to accept a list of library directories.',
+  );
+  assert(
+    mainPy.includes('"games_dirs":') || mainPy.includes("updated[\"games_dirs\"]"),
+    'Expected backend settings responses to expose the configured directory list.',
+  );
+  assert(
+    ingestPy.includes('scan_games_directories('),
+    'Expected ingestion to scan every configured library root instead of only one directory.',
+  );
 });
 
 test('startup no longer blocks on sequential fetches or unconditional delayed reloads', () => {

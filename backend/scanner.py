@@ -2,10 +2,8 @@ import os
 import re
 import zipfile
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-from backend.config import get_games_dir
-
-ROOT_DIR = get_games_dir()
+from typing import List, Dict, Any, Optional, Iterable
+from backend.config import get_games_dir, get_games_dirs
 
 def clean_name(name: str) -> Dict[str, str]:
     # Check for exact RJ/BJ/VJ code anywhere in string
@@ -130,6 +128,26 @@ def scan_games_directory(root_path: Optional[Path] = None) -> List[Dict[str, Any
 
     return results
 
+
+def scan_games_directories(root_paths: Optional[Iterable[Path | str]] = None) -> List[Dict[str, Any]]:
+    configured_roots = list(root_paths or get_games_dirs())
+    if not configured_roots:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    seen_paths: set[str] = set()
+
+    for root_value in configured_roots:
+        root_path = Path(root_value).expanduser()
+        for item in scan_games_directory(root_path):
+            folder_path = str(item.get("folder_path") or "")
+            if folder_path in seen_paths:
+                continue
+            seen_paths.add(folder_path)
+            results.append(item)
+
+    return results
+
 def scan_single_game_path(selected_path: str) -> Optional[Dict[str, Any]]:
     if not selected_path:
         return None
@@ -141,14 +159,18 @@ def scan_single_game_path(selected_path: str) -> Optional[Dict[str, Any]]:
     if item_path.is_file() and not item_path.name.lower().endswith(('.zip', '.rar', '.7z', '.iso', '.exe')):
         return None
 
-    try:
-        games_root = get_games_dir().resolve()
-    except Exception:
-        games_root = None
+    games_roots = []
+    for root in get_games_dirs():
+        try:
+            games_roots.append(root.resolve())
+        except Exception:
+            continue
 
     category = item_path.parent.name or "Manual"
-    if games_root and item_path.parent == games_root:
-        category = games_root.name
+    for games_root in games_roots:
+        if item_path.parent == games_root:
+            category = games_root.name
+            break
 
     return _create_entry(category, item_path)
 

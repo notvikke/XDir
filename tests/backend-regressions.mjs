@@ -10,6 +10,7 @@ const mainPy = fs.readFileSync('backend/main.py', 'utf8');
 const sourceMapPy = fs.readFileSync('backend/source_map.py', 'utf8');
 const specFile = fs.readFileSync('XDir.spec', 'utf8');
 const runtimePy = fs.readFileSync('backend/runtime.py', 'utf8');
+const versioningPy = fs.readFileSync('backend/versioning.py', 'utf8');
 
 function assert(condition, message) {
   if (!condition) {
@@ -28,14 +29,45 @@ function test(name, fn) {
   }
 }
 
-test('settings-triggered ingestion does not capture the request database session', () => {
+test('game update tracking uses central versioning routes and durable state', () => {
+  for (const route of [
+    '@app.post("/api/games/{game_id}/check-update")',
+    '@app.patch("/api/games/{game_id}/version")',
+    '@app.post("/api/games/{game_id}/mark-latest-installed")',
+    '@app.post("/api/library/check-updates")',
+  ]) {
+    assert(mainPy.includes(route), `Expected backend route ${route}.`);
+  }
+  assert(mainPy.includes('apply_comparison_to_game(game, checked_at=utc_now())'), 'Expected extension sync to use the central comparator.');
+  assert(!mainPy.includes('clean_latest > clean_local'), 'Expected lexicographical version ordering to be removed.');
+  assert(versioningPy.includes('def compare_versions('), 'Expected one central version comparison service.');
+  assert(versioningPy.includes('def check_library_updates('), 'Expected one central library update iterator.');
+});
+
+test('game update database migration and startup schedule are explicit and repeatable', () => {
+  for (const column of [
+    'last_update_check_at',
+    'last_update_check_status',
+    'last_update_check_error',
+    'update_detected_at',
+    'local_version_is_manual',
+  ]) {
+    assert(databasePy.includes(column), `Expected database update tracking column ${column}.`);
+  }
+  assert(configPy.includes('"automatic_game_update_checks": True'), 'Expected automatic game update checks to default on.');
+  assert(configPy.includes('"game_update_check_interval_days": 7'), 'Expected a seven-day default interval.');
+  assert(appPy.includes('schedule_automatic_game_update_check(get_settings())'), 'Expected automatic checks after startup maintenance.');
+  assert(appPy.includes('_automatic_game_update_check_started'), 'Expected a per-session automatic-check guard.');
+});
+
+test('settings updates no longer hide a background ingestion side effect behind the save-preferences route', () => {
   assert(
-    mainPy.includes('background_tasks.add_task(run_ingestion)'),
-    'Expected settings save flow to schedule run_ingestion without reusing the request-scoped db session.',
+    !mainPy.includes('background_tasks.add_task(run_ingestion'),
+    'Expected settings save flow to stop launching a hidden ingestion job now that directory changes are handled from the Library tab.',
   );
   assert(
     !mainPy.includes('background_tasks.add_task(run_ingestion, db)'),
-    'Expected request-scoped db session handoff to background task to be removed.',
+    'Expected request-scoped db session handoff to background task to stay removed.',
   );
 });
 
@@ -460,7 +492,8 @@ test('source-linking routes scrape the user-selected source instead of reusing s
     'Expected scraper helpers to expose a direct source-metadata fetcher independent of the Game model state.',
   );
   assert(
-    scraperPy.includes('def apply_metadata_to_game(game: Game, db: Session, data: Dict[str, Any], force_overwrite: bool = True) -> Game:'),
+    scraperPy.includes('def apply_metadata_to_game(') &&
+      scraperPy.includes('force_overwrite: bool = True'),
     'Expected metadata application to be split from source selection so linking flows can scrape arbitrary selected sources.',
   );
   assert(
@@ -525,6 +558,21 @@ test('desktop bridge exposes a native external URL opener for overview source bu
   assert(
     appPy.includes('os.startfile(url)'),
     'Expected the native external URL opener to use the Windows shell for browser handoff.',
+  );
+});
+
+test('desktop bridge exposes a native local-path opener for extension and settings actions', () => {
+  assert(
+    appPy.includes('def open_path(self, target_path, select=False):'),
+    'Expected the desktop bridge to expose a reusable local-path opener for extension-folder actions.',
+  );
+  assert(
+    appPy.includes('explorer.exe') || appPy.includes('explorer /select'),
+    'Expected native local-path opening to support selecting files in Explorer when requested.',
+  );
+  assert(
+    appPy.includes('os.startfile(path)'),
+    'Expected native local-path opening to use the Windows shell for folders and direct opens.',
   );
 });
 
@@ -597,6 +645,49 @@ test('settings metadata jobs expose real per-game progress instead of an indeter
   );
 });
 
+test('library portability routes expose tracked export/import jobs and native desktop file dialogs', () => {
+  assert(
+    mainPy.includes('@app.post("/api/library/export")'),
+    'Expected the backend to expose a dedicated portable library export endpoint.',
+  );
+  assert(
+    mainPy.includes('@app.post("/api/library/import")'),
+    'Expected the backend to expose a dedicated portable library import endpoint.',
+  );
+  assert(
+    mainPy.includes('start_job("export-library",') &&
+      mainPy.includes('start_job("import-library",'),
+    'Expected library export and import to run as tracked background jobs.',
+  );
+  assert(
+    mainPy.includes('background_tasks.add_task(run_library_export_job') &&
+      mainPy.includes('background_tasks.add_task(run_library_import_job'),
+    'Expected library portability actions to run out of band so the settings UI can poll progress.',
+  );
+  assert(
+    appPy.includes('def save_library_export_file(self, initial_dir=None):'),
+    'Expected the desktop bridge to expose a native save-file dialog for library exports.',
+  );
+  assert(
+    appPy.includes('def browse_library_import_file(self, initial_dir=None):'),
+    'Expected the desktop bridge to expose a native open-file dialog for library imports.',
+  );
+  assert(
+    appPy.includes('webview.SAVE_DIALOG') &&
+      appPy.includes('create_file_dialog(webview.SAVE_DIALOG'),
+    'Expected library export to use the native pywebview save dialog.',
+  );
+  assert(
+    appPy.includes('create_file_dialog(webview.OPEN_DIALOG') &&
+      appPy.includes('XDir Library Export'),
+    'Expected library import to use the native pywebview open dialog with the portable export file filter.',
+  );
+  assert(
+    fs.existsSync('backend/library_portability.py'),
+    'Expected a dedicated backend/library_portability.py module for portable library export/import helpers.',
+  );
+});
+
 test('deleting a wishlist entry should hide it without letting extension sync recreate it', () => {
   assert(
     mainPy.includes('query = db.query(Game).filter(Game.is_ignored == False)'),
@@ -650,7 +741,52 @@ test('database is optimized with selectin eager loading, WAL mode pragmas, and t
   );
 });
 
-test('smart metadata scan exposes tracked background endpoints, cancellation, and review application hooks', () => {
+test('launch tracking stores cumulative playtime and exposes a dedicated open-folder route', () => {
+  assert(
+    databasePy.includes('total_playtime_seconds = Column(Integer, default=0)'),
+    'Expected the Game model to persist cumulative playtime in seconds.',
+  );
+  assert(
+    databasePy.includes('play_session_count = Column(Integer, default=0)'),
+    'Expected the Game model to persist how many tracked play sessions have completed.',
+  );
+  assert(
+    databasePy.includes('"total_playtime_seconds": self.total_playtime_seconds') &&
+      databasePy.includes('"play_session_count": self.play_session_count'),
+    'Expected Game.to_dict() to expose playtime fields to the frontend and export pipeline.',
+  );
+  assert(
+    fs.existsSync('backend/launching.py'),
+    'Expected a dedicated backend/launching.py module for launch-target resolution and playtime helpers.',
+  );
+  const launchingPy = fs.readFileSync('backend/launching.py', 'utf8');
+  assert(
+    launchingPy.includes('def choose_launch_executable(') &&
+      launchingPy.includes('def accumulate_playtime('),
+    'Expected the launching helper module to expose executable selection and playtime accumulation helpers.',
+  );
+  assert(
+    mainPy.includes('@app.post("/api/games/{game_id}/open-folder")'),
+    'Expected the API to expose a dedicated open-folder route separate from Launch.',
+  );
+  assert(
+    mainPy.includes('subprocess.Popen([exe_path], cwd=os.path.dirname(exe_path))') ||
+      mainPy.includes('launch_tracked_game_process('),
+    'Expected Launch to stop using os.startfile for tracked game executions so the process can be monitored.',
+  );
+  assert(
+    sourceMapPy.includes('"total_playtime_seconds"') &&
+      sourceMapPy.includes('"play_session_count"'),
+    'Expected durable source snapshots to preserve playtime totals during portable recovery flows.',
+  );
+  assert(
+    mainPy.includes('record.get("total_playtime_seconds"') &&
+      mainPy.includes('record.get("play_session_count"'),
+    'Expected portable import to restore playtime totals from the export manifest.',
+  );
+});
+
+test('missing-source discovery is the only online scan and exposes tracked review hooks', () => {
   const jobProgressPy = fs.readFileSync('backend/job_progress.py', 'utf8');
   const smartScanPy = fs.readFileSync('backend/smart_scan.py', 'utf8');
   assert(
@@ -662,20 +798,20 @@ test('smart metadata scan exposes tracked background endpoints, cancellation, an
     'Expected a reusable backend/title_normalization.py helper for messy local folder names.',
   );
   assert(
-    mainPy.includes('@app.post("/api/library/smart-scan")'),
-    'Expected the API to expose a dedicated smart metadata scan start endpoint.',
+    !mainPy.includes('@app.post("/api/library/smart-scan")'),
+    'Expected the obsolete smart metadata scan route to be removed.',
   );
   assert(
     mainPy.includes('@app.post("/api/library/missing-source-scan")'),
-    'Expected the API to expose a separate missing-source-only scan endpoint instead of overloading the existing smart scan route.',
+    'Expected the API to expose the canonical missing-source-only scan endpoint.',
   );
   assert(
-    mainPy.includes('background_tasks.add_task(run_smart_metadata_scan_job)'),
-    'Expected the smart metadata scan to run in the background so the modal can poll progress live.',
+    mainPy.includes('background_tasks.add_task(run_missing_source_metadata_scan_job)'),
+    'Expected missing-source discovery to run in the background so the modal can poll progress live.',
   );
   assert(
-    mainPy.includes('start_job("smart-scan", total, "Smart metadata scan")'),
-    'Expected the smart scan endpoint to initialize a tracked job with a dedicated label.',
+    mainPy.includes('start_job("missing-source-scan", total, "Missing source metadata scan")'),
+    'Expected missing-source discovery to initialize its canonical tracked job.',
   );
   assert(
     mainPy.includes('@app.post("/api/library/jobs/{job_key}/cancel")'),
@@ -690,19 +826,41 @@ test('smart metadata scan exposes tracked background endpoints, cancellation, an
     'Expected tracked job state to preserve whether cancellation has been requested.',
   );
   assert(
-    mainPy.includes('@app.post("/api/library/smart-scan/review/{game_id}/apply")'),
-    'Expected the API to expose a manual-review apply endpoint for smart scan candidates.',
+    mainPy.includes('@app.post("/api/library/missing-source-scan/review/{game_id}/apply")') &&
+      mainPy.includes('@app.post("/api/library/missing-source-scan/review/{game_id}/skip")'),
+    'Expected canonical apply and skip endpoints for missing-source review candidates.',
   );
   assert(
-    mainPy.includes('apply_smart_scan_candidate'),
-    'Expected backend review application to route selected candidates through a shared smart scan helper.',
+    mainPy.includes('apply_missing_source_candidate'),
+    'Expected backend review application to route candidates through the shared missing-source helper.',
   );
   assert(
     smartScanPy.includes('"thumbnail_url"'),
-    'Expected smart scan review payloads to expose a thumbnail URL for unresolved-game review rows when cover art is available.',
+    'Expected missing-source review payloads to expose a thumbnail URL when cover art is available.',
   );
   assert(
     smartScanPy.includes('def should_include_in_missing_source_scan'),
     'Expected backend/smart_scan.py to expose a dedicated target filter for missing-source-only scans.',
+  );
+});
+
+test('refresh all metadata is a source-preserving tracked job with bounded result fields', () => {
+  const refreshPy = fs.readFileSync('backend/metadata_refresh.py', 'utf8');
+  const scraperPy = fs.readFileSync('backend/scraper.py', 'utf8');
+  assert(
+    mainPy.includes('@app.post("/api/library/refresh-all-metadata")') &&
+      mainPy.includes('REFRESH_ALL_METADATA_JOB_KEY = "refresh-all-metadata"'),
+    'Expected the canonical refresh-all-metadata tracked endpoint and job key.',
+  );
+  assert(
+    refreshPy.includes('resolve_metadata_refresh_source') &&
+      refreshPy.includes('RESULT_LIMIT = 50') &&
+      refreshPy.includes('should_cancel'),
+    'Expected source-preserving resolution, bounded results, and cancellation between games.',
+  );
+  assert(
+    databasePy.includes('title_is_manual = Column(Boolean, default=False)') &&
+      scraperPy.includes("not getattr(game, 'title_is_manual', False)"),
+    'Expected explicit manual-title ownership to survive source metadata refreshes.',
   );
 });

@@ -5,11 +5,22 @@ from datetime import datetime
 from pathlib import Path
 from sqlalchemy.orm import Session
 from backend.database import SessionLocal, init_db, Game
-from backend.config import get_settings
-from backend.scanner import scan_games_directory
+from backend.config import get_settings, get_games_dirs, is_path_within_games_dirs
+from backend.scanner import scan_games_directories
 from backend.source_map import find_source_map_entry, hydrate_game_from_source_snapshot
 
 CSV_PATH = Path("games_report.csv").resolve()
+
+
+def apply_scanned_local_version(game: Game, scanned_version: str | None) -> bool:
+    """Populate a discovered version only when the user has not taken manual control."""
+    if getattr(game, "local_version_is_manual", False):
+        return False
+    clean_version = str(scanned_version or "").strip()
+    if getattr(game, "local_version", None) or not clean_version:
+        return False
+    game.local_version = clean_version
+    return True
 
 def normalize_name(name: str) -> str:
     name = re.sub(r'(\bv\d+.*|\b\d+b\b|rev\d+|fixed|ver\b.*|windows|win32|win64|linux|mac\b|edition|complete|deluxe|game|part|chapter|english|translated|archive|rar|zip|7z|\bv\d+\b).*', '', name or '', flags=re.IGNORECASE)
@@ -76,7 +87,8 @@ def run_ingestion(db: Session = None):
                         csv_map[raw] = link
                         
         # Scan filesystem
-        scanned_items = scan_games_directory()
+        configured_roots = get_games_dirs()
+        scanned_items = scan_games_directories(configured_roots)
         scanned_paths = set()
         
         added_count = 0
@@ -131,8 +143,7 @@ def run_ingestion(db: Session = None):
                     game.archive_name = item["archive_name"]
                 if not game.size_bytes or item["file_type"] in ('exe', 'folder'):
                     game.size_bytes = item["size_bytes"]
-                if not game.local_version and item["local_version"]:
-                    game.local_version = item["local_version"]
+                apply_scanned_local_version(game, item["local_version"])
                 if not game.is_identified and is_identified:
                     game.source_type = source_type
                     game.source_url = source_url
@@ -176,6 +187,10 @@ def run_ingestion(db: Session = None):
             if g.folder_path in scanned_paths:
                 g.last_seen_at = scan_started_at
                 g.missing_scan_count = 0
+                continue
+            if g.folder_path and not is_path_within_games_dirs(g.folder_path, configured_roots):
+                db.delete(g)
+                orphaned_removed += 1
                 continue
             if g.folder_path and os.path.exists(g.folder_path):
                 g.last_seen_at = scan_started_at
@@ -329,12 +344,22 @@ def merge_game_records(primary: Game, duplicate: Game, db: Session) -> int:
         "cover_url",
         "rating",
         "release_date",
-        "local_version",
         "latest_version",
         "archive_name",
     ):
         if not getattr(primary, field) and getattr(duplicate, field):
             setattr(primary, field, getattr(duplicate, field))
+
+    if not getattr(primary, "local_version_is_manual", False) and not primary.local_version and duplicate.local_version:
+        primary.local_version = duplicate.local_version
+        primary.local_version_is_manual = bool(getattr(duplicate, "local_version_is_manual", False))
+
+    if (primary.playing_progress or "unplayed") == "unplayed" and (duplicate.playing_progress or "unplayed") != "unplayed":
+        primary.playing_progress = duplicate.playing_progress
+    if not primary.user_score and duplicate.user_score:
+        primary.user_score = duplicate.user_score
+    primary.total_playtime_seconds = max(int(primary.total_playtime_seconds or 0), int(duplicate.total_playtime_seconds or 0))
+    primary.play_session_count = max(int(primary.play_session_count or 0), int(duplicate.play_session_count or 0))
 
     if primary.file_type == "archive" and duplicate.file_type in ("exe", "folder"):
         primary.folder_path = duplicate.folder_path
@@ -349,6 +374,10 @@ def merge_game_records(primary: Game, duplicate: Game, db: Session) -> int:
     primary.last_seen_at = max(
         [dt for dt in [primary.last_seen_at, duplicate.last_seen_at] if dt is not None],
         default=primary.last_seen_at or duplicate.last_seen_at,
+    )
+    primary.last_played = max(
+        [dt for dt in [primary.last_played, duplicate.last_played] if dt is not None],
+        default=primary.last_played or duplicate.last_played,
     )
     primary.missing_scan_count = min(primary.missing_scan_count or 0, duplicate.missing_scan_count or 0)
 

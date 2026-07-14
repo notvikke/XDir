@@ -1,5 +1,6 @@
 import re
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from backend.scraper import (
     search_itch,
 )
 from backend.source_map import persist_game_snapshot
+from backend.versioning import has_usable_linked_source
 from backend.title_normalization import (
     compact_title,
     generate_query_candidates,
@@ -41,6 +43,33 @@ SEARCH_HANDLERS = {
     "dlsite": search_dlsite,
     "itch": search_itch,
 }
+
+
+def build_game_search_queries(game: Game) -> List[Dict[str, str]]:
+    seeds = [
+        getattr(game, "title", None),
+        getattr(game, "raw_name", None),
+        getattr(game, "archive_name", None),
+    ]
+    folder_path = str(getattr(game, "folder_path", "") or "").strip()
+    if folder_path:
+        seeds.append(Path(folder_path).name)
+    source_id = str(getattr(game, "source_id", "") or "").strip()
+    if re.fullmatch(r"(?i)(?:RJ|VJ|BJ)\d{6,8}", source_id):
+        seeds.append(source_id.upper())
+
+    queries: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for seed in seeds:
+        if not str(seed or "").strip():
+            continue
+        for candidate in generate_query_candidates(str(seed)):
+            key = candidate["query"].casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            queries.append(candidate)
+    return queries
 
 
 def build_source_search_order(preferred_source: Optional[str] = None) -> List[str]:
@@ -86,44 +115,14 @@ def _title_looks_folder_based(game: Game) -> bool:
     return False
 
 
-def _has_unresolved_source(game: Game) -> bool:
-    if not game.source_url or not game.source_id:
-        return True
-    return (game.source_type or "unknown").lower() == "unknown"
-
-
-def should_include_in_smart_scan(game: Game) -> bool:
-    if getattr(game, "file_type", "") == "wishlist":
-        return False
-    if getattr(game, "is_ignored", False):
-        return False
-    if not getattr(game, "is_identified", False):
-        return True
-    if _has_unresolved_source(game):
-        return True
-    if _title_looks_folder_based(game):
-        return True
-    return not is_metadata_rich(game)
-
-
 def should_include_in_missing_source_scan(game: Game) -> bool:
     if getattr(game, "file_type", "") == "wishlist":
         return False
     if getattr(game, "is_ignored", False):
         return False
-    if not getattr(game, "is_identified", False):
-        return True
-    return _has_unresolved_source(game)
-
-
-def list_smart_scan_targets(db: Session) -> List[Game]:
-    games = (
-        db.query(Game)
-        .filter(Game.file_type != "wishlist", Game.is_ignored == False)
-        .order_by(Game.title.asc())
-        .all()
-    )
-    return [game for game in games if should_include_in_smart_scan(game)]
+    if int(getattr(game, "missing_scan_count", 0) or 0) > 0:
+        return False
+    return not has_usable_linked_source(game)
 
 
 def list_missing_source_scan_targets(db: Session) -> List[Game]:
@@ -283,6 +282,22 @@ def _rank_candidates(
     )
 
 
+def choose_unambiguous_auto_match(
+    candidates: List[Dict[str, Any]],
+    *,
+    source_order: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    ranked = _rank_candidates(candidates, source_order=source_order)
+    if not ranked:
+        return None
+    best = ranked[0]
+    if best.get("confidence") != "high" or int(best.get("score") or 0) < 94:
+        return None
+    if len(ranked) > 1 and int(best.get("score") or 0) - int(ranked[1].get("score") or 0) < 8:
+        return None
+    return best
+
+
 def _candidate_key(candidate: Dict[str, Any]) -> str:
     source_type = str(candidate.get("source_type") or "").lower()
     url = str(candidate.get("url") or candidate.get("source_url") or "").strip().lower().rstrip("/")
@@ -331,7 +346,33 @@ def choose_review_thumbnail(candidate: Optional[Dict[str, Any]], game: Game) -> 
     return existing_cover or None
 
 
-def _build_review_item(
+_MATCH_REASON_CODES = {
+    "Exact normalized title match": "normalized_title_match",
+    "PascalCase / compact title match": "compact_title_match",
+    "Near-identical fuzzy title match": "near_identical_title_match",
+    "Strong fuzzy title match": "strong_title_match",
+    "Moderate fuzzy title match": "moderate_title_match",
+    "Partial normalized title match": "partial_title_match",
+    "Strong word overlap": "title_word_overlap",
+    "Developer/circle match": "developer_match",
+    "Developer/circle partial match": "developer_partial_match",
+    "Low-signal match": "low_signal_match",
+}
+
+
+def _review_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "source_type": candidate.get("source_type"),
+        "source_url": candidate.get("source_url") or candidate.get("url"),
+        "source_id": candidate.get("source_id"),
+        "title": candidate.get("title"),
+        "creator": candidate.get("creator"),
+        "cover": candidate.get("cover"),
+        "version": candidate.get("version"),
+    }
+
+
+def build_missing_source_review_item(
     game: Game,
     *,
     status: str,
@@ -342,8 +383,21 @@ def _build_review_item(
 ) -> Dict[str, Any]:
     ranked_candidates = _rank_candidates(candidates, source_order=source_order) if candidates else []
     thumbnail_source = thumbnail_candidate or choose_best_candidate(ranked_candidates, source_order=source_order)
+    top_candidate = ranked_candidates[0] if ranked_candidates else None
+    confidence = round(min(1.0, max(0, int((top_candidate or {}).get("score") or 0)) / 100), 2)
+    match_reason = [
+        _MATCH_REASON_CODES.get(reason, re.sub(r"[^a-z0-9]+", "_", reason.casefold()).strip("_"))
+        for reason in list((top_candidate or {}).get("reasons") or [])
+    ]
     return {
         "game_id": game.id,
+        "local_title": game.title,
+        "raw_name": game.raw_name,
+        "folder_path": game.folder_path,
+        "candidate": _review_candidate(top_candidate) if top_candidate else None,
+        "confidence": confidence,
+        "match_reason": match_reason,
+        # Compatibility fields retained until the stage-two frontend consumes the canonical contract.
         "local_name": game.raw_name,
         "current_title": game.title,
         "metadata_status": describe_metadata_status(game),
@@ -354,7 +408,7 @@ def _build_review_item(
     }
 
 
-def apply_smart_scan_candidate(
+def apply_missing_source_candidate(
     game: Game,
     db: Session,
     candidate: Dict[str, Any],
@@ -367,11 +421,17 @@ def apply_smart_scan_candidate(
     if not source_type or not source_url:
         raise ValueError("Candidate source details are incomplete.")
 
+    normalized_url = source_url.casefold().rstrip("/")
+    normalized_source_id = str(source_id or "").casefold()
     existing_source = next(
         (
             item
             for item in game.sources
-            if item.source_type == source_type and item.source_url == source_url
+            if str(item.source_type or "").casefold() == source_type
+            and (
+                str(item.source_url or "").casefold().rstrip("/") == normalized_url
+                or (normalized_source_id and str(item.source_id or "").casefold() == normalized_source_id)
+            )
         ),
         None,
     )
@@ -379,6 +439,7 @@ def apply_smart_scan_candidate(
         item.is_preferred = False
     if existing_source:
         existing_source.is_preferred = True
+        source_url = existing_source.source_url
         if source_id and not existing_source.source_id:
             existing_source.source_id = source_id
     else:
@@ -399,7 +460,7 @@ def apply_smart_scan_candidate(
     game.source_id = source_id
     game.is_identified = True
 
-    if _title_looks_folder_based(game) and candidate.get("title"):
+    if not getattr(game, "title_is_manual", False) and _title_looks_folder_based(game) and candidate.get("title"):
         game.title = str(candidate.get("title")).strip()
     if not game.developer and candidate.get("creator"):
         game.developer = str(candidate.get("creator")).strip()
@@ -440,7 +501,7 @@ def _search_candidates_for_game(
     preferred_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     local_name = game.raw_name or game.title or ""
-    query_candidates = generate_query_candidates(local_name, title_hint=game.title)
+    query_candidates = build_game_search_queries(game)
     developer_hint = game.developer or None
     source_order = build_source_search_order(preferred_source)
     seen = set()
@@ -495,13 +556,8 @@ def _search_candidates_for_game(
                 )
                 candidates.append(candidate)
 
-            source_matches = [candidate for candidate in candidates if candidate["source_type"] == source_type]
-            best_source_match = choose_best_candidate(source_matches, source_order=source_order)
-            if source_type == source_order[0] and best_source_match and best_source_match.get("confidence") == "high":
-                return {"status": "auto", "candidate": best_source_match, "candidates": _rank_candidates(source_matches, source_order=source_order), "errors": errors}
-
-    best_candidate = choose_best_candidate(candidates, source_order=source_order)
-    if best_candidate and best_candidate.get("confidence") == "high":
+    best_candidate = choose_unambiguous_auto_match(candidates, source_order=source_order)
+    if best_candidate:
         return {"status": "auto", "candidate": best_candidate, "candidates": _rank_candidates(candidates, source_order=source_order), "errors": errors}
     if candidates:
         return {"status": "review", "candidates": _rank_candidates(candidates, source_order=source_order)[:8], "errors": errors}
@@ -510,15 +566,13 @@ def _search_candidates_for_game(
     return {"status": "not_found", "candidates": [], "errors": errors}
 
 
-def run_smart_metadata_scan(
+def run_missing_source_scan(
     db: Session,
     *,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
-    target_games: Optional[List[Game]] = None,
-    summary_label: str = "Smart scan",
 ) -> Dict[str, Any]:
-    games = target_games if target_games is not None else list_smart_scan_targets(db)
+    games = list_missing_source_scan_targets(db)
     preferred_source = get_settings().get("preferred_source")
     source_order = build_source_search_order(preferred_source)
     total = len(games)
@@ -583,11 +637,11 @@ def run_smart_metadata_scan(
                             "failed_count": failed,
                         }
                     )
-                applied = apply_smart_scan_candidate(game, db, candidate, force_overwrite=False)
+                applied = apply_missing_source_candidate(game, db, candidate, force_overwrite=False)
                 if applied.get("warning"):
                     outcome = "failed"
                     review_items.append(
-                        _build_review_item(
+                        build_missing_source_review_item(
                             game,
                             status="failed",
                             candidates=[candidate],
@@ -602,7 +656,7 @@ def run_smart_metadata_scan(
 
         if outcome == "review":
             review_items.append(
-                _build_review_item(
+                build_missing_source_review_item(
                     game,
                     status="review",
                     candidates=search_result.get("candidates", []),
@@ -613,7 +667,7 @@ def run_smart_metadata_scan(
             manual_review += 1
         elif outcome == "not_found":
             review_items.append(
-                _build_review_item(
+                build_missing_source_review_item(
                     game,
                     status="not_found",
                     candidates=[],
@@ -624,7 +678,7 @@ def run_smart_metadata_scan(
             not_found += 1
         elif outcome == "failed" and not any(item.get("game_id") == game.id for item in review_items):
             review_items.append(
-                _build_review_item(
+                build_missing_source_review_item(
                     game,
                     status="failed",
                     candidates=search_result.get("candidates", []),
@@ -653,7 +707,7 @@ def run_smart_metadata_scan(
             )
 
     cancelled = bool(should_cancel and should_cancel() and processed < total)
-    summary_prefix = f"{summary_label} cancelled" if cancelled else f"{summary_label} complete"
+    summary_prefix = "Missing source scan cancelled" if cancelled else "Missing source scan complete"
     summary = (
         f"{summary_prefix}. {processed} games processed, "
         f"{matched} metadata entries applied automatically, "
@@ -671,18 +725,3 @@ def run_smart_metadata_scan(
         "review_items": review_items,
         "summary": summary,
     }
-
-
-def run_missing_source_metadata_scan(
-    db: Session,
-    *,
-    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-    should_cancel: Optional[Callable[[], bool]] = None,
-) -> Dict[str, Any]:
-    return run_smart_metadata_scan(
-        db,
-        progress_callback=progress_callback,
-        should_cancel=should_cancel,
-        target_games=list_missing_source_scan_targets(db),
-        summary_label="Missing source scan",
-    )

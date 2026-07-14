@@ -365,7 +365,15 @@ def fetch_source_metadata(source_type: Optional[str], source_url: Optional[str],
         return scrape_steam(source_url, source_id)
     return {}
 
-def apply_metadata_to_game(game: Game, db: Session, data: Dict[str, Any], force_overwrite: bool = True) -> Game:
+def apply_metadata_to_game(
+    game: Game,
+    db: Session,
+    data: Dict[str, Any],
+    force_overwrite: bool = True,
+    *,
+    commit: bool = True,
+    persist_snapshot_after: bool = True,
+) -> Game:
     if not data:
         return game
 
@@ -379,12 +387,14 @@ def apply_metadata_to_game(game: Game, db: Session, data: Dict[str, Any], force_
         game.rating = data['rating']
     current_title_is_code = bool(re.match(r'^[RVB]J\d{6,8}$', str(game.title or ''), re.I))
     if data.get('title') and len(data['title']) > 2:
-        if force_overwrite or not game.title or current_title_is_code:
+        if (force_overwrite and not getattr(game, 'title_is_manual', False)) or not game.title or current_title_is_code:
             game.title = data['title']
+    if data.get('release_date') and (force_overwrite or not game.release_date):
+        game.release_date = data['release_date']
     if data.get('latest_version'):
         game.latest_version = data['latest_version']
-        if game.local_version and game.latest_version != game.local_version:
-            game.update_available = True
+        from backend.versioning import apply_comparison_to_game
+        apply_comparison_to_game(game)
 
     if data.get('screenshots'):
         for s in list(game.screenshots):
@@ -393,32 +403,27 @@ def apply_metadata_to_game(game: Game, db: Session, data: Dict[str, Any], force_
             game.screenshots.append(Screenshot(game_id=game.id, url=s_url))
 
     if data.get('tags'):
-        existing = [t.tag_name for t in game.tags]
+        if force_overwrite:
+            for tag in list(game.tags):
+                db.delete(tag)
+            existing = []
+        else:
+            existing = [t.tag_name for t in game.tags]
         for t_str in data['tags']:
             if t_str not in existing:
                 game.tags.append(Tag(game_id=game.id, tag_name=t_str))
 
     db.add(game)
-    db.commit()
-    db.refresh(game)
-    persist_game_snapshot(game)
+    if commit:
+        db.commit()
+        db.refresh(game)
+        if persist_snapshot_after:
+            persist_game_snapshot(game)
     return game
 
 def fetch_game_metadata(game: Game, db: Session, force_overwrite: bool = True) -> Game:
     data = fetch_source_metadata(game.source_type, game.source_url, game.source_id)
     return apply_metadata_to_game(game, db, data, force_overwrite=force_overwrite)
-
-def fetch_all_missing_metadata(db: Session) -> int:
-    games = db.query(Game).filter(Game.is_identified == True).all()
-    count = 0
-    for g in games:
-        if not g.cover_url or len(g.screenshots) == 0:
-            try:
-                fetch_game_metadata(g, db, force_overwrite=False)
-                count += 1
-            except Exception:
-                continue
-    return count
 
 def rematch_and_scrape_f95zone(db: Session, target_game_id: Optional[int] = None, progress_callback = None) -> Dict[str, Any]:
     query = db.query(Game)
