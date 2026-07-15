@@ -3,11 +3,13 @@ import json
 import urllib.request
 import urllib.parse
 import requests
+from difflib import SequenceMatcher
 from bs4 import BeautifulSoup
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from backend.database import Game, Screenshot, Tag
 from backend.source_map import persist_game_snapshot
+from backend.title_normalization import normalize_title, tokenize_title
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -609,27 +611,140 @@ def fix_all_titles_and_metadata(db: Session, progress_callback = None) -> Dict[s
                 continue
     return {"message": f"Fixed titles and refetched covers/screenshots for {updated} identified games and rematched {rematched} games.", "updated": updated, "rematched": rematched, "total": total_games}
 
+_F95ZONE_SEARCH_STOPWORDS = frozenset({
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "by",
+    "for",
+    "from",
+    "i",
+    "in",
+    "is",
+    "it",
+    "my",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+})
+
+
+def _build_f95zone_search_queries(query: str) -> List[str]:
+    literal = re.sub(r"\s+", " ", str(query or "")).strip()
+    if len(literal) < 2:
+        return []
+
+    candidates: List[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        cleaned = re.sub(r"\s+", " ", candidate or "").strip()
+        key = cleaned.casefold()
+        if len(cleaned) < 2 or key in seen:
+            return
+        seen.add(key)
+        candidates.append(cleaned)
+
+    add(literal)
+
+    without_possessives = re.sub(
+        r"(?i)(?<=[a-z0-9])'s\b",
+        "",
+        literal.replace(chr(0x2019), "'"),
+    )
+    normalized = re.sub(r"[^A-Za-z0-9]+", " ", without_possessives)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    add(normalized)
+
+    words = normalized.split()
+    edge_trimmed = list(words)
+    while edge_trimmed and edge_trimmed[0].casefold() in _F95ZONE_SEARCH_STOPWORDS:
+        edge_trimmed.pop(0)
+    while edge_trimmed and edge_trimmed[-1].casefold() in _F95ZONE_SEARCH_STOPWORDS:
+        edge_trimmed.pop()
+    add(" ".join(edge_trimmed))
+
+    meaningful_words = [
+        word
+        for word in words
+        if word.casefold() not in _F95ZONE_SEARCH_STOPWORDS
+    ]
+    if len(meaningful_words) >= 2:
+        add(" ".join(meaningful_words))
+
+    return candidates[:4]
+
+
+def _rank_f95zone_result(query: str, item: Dict[str, Any]) -> tuple:
+    query_title = normalize_title(query)
+    result_title = normalize_title(str(item.get("title") or ""))
+    match_index = result_title.find(query_title) if query_title else -1
+
+    query_tokens = set(tokenize_title(query))
+    result_tokens = set(tokenize_title(str(item.get("title") or "")))
+    token_coverage = (
+        len(query_tokens & result_tokens) / len(query_tokens)
+        if query_tokens
+        else 0.0
+    )
+    similarity = SequenceMatcher(None, query_title, result_title).ratio()
+
+    return (
+        0 if query_title and result_title == query_title else 1,
+        0 if query_title and result_title.startswith(query_title) else 1,
+        0 if match_index >= 0 else 1,
+        match_index if match_index >= 0 else len(result_title) + 1,
+        -token_coverage,
+        -similarity,
+        len(result_title),
+        result_title,
+    )
+
+
 def search_f95zone(query: str) -> List[Dict[str, Any]]:
-    if not query or len(query.strip()) < 2:
+    search_queries = _build_f95zone_search_queries(query)
+    if not search_queries:
         return []
-    try:
-        r = requests.get(f"https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games&search={urllib.parse.quote(query.strip())}", headers=HEADERS, timeout=10)
-        data_list = r.json().get('msg', {}).get('data', [])
-        results = []
-        if isinstance(data_list, list):
-            for item in data_list[:15]:
-                results.append({
-                    "source_type": "f95zone",
-                    "source_id": str(item.get('thread_id', '')),
-                    "title": item.get('title', 'Unknown Title'),
-                    "version": item.get('version', ''),
-                    "creator": item.get('creator', 'Unknown Developer'),
-                    "cover": item.get('cover', ''),
-                    "url": f"https://f95zone.to/threads/{item.get('thread_id')}/" if item.get('thread_id') else ""
-                })
-        return results
-    except Exception:
-        return []
+
+    data_list: List[Dict[str, Any]] = []
+    for search_query in search_queries:
+        try:
+            encoded_query = urllib.parse.quote(search_query)
+            url = f"https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games&search={encoded_query}"
+            response = requests.get(url, headers=HEADERS, timeout=10)
+            candidate_data = response.json().get("msg", {}).get("data", [])
+        except Exception:
+            return []
+        if isinstance(candidate_data, list) and candidate_data:
+            data_list = candidate_data
+            break
+
+    results: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in data_list:
+        thread_id = str(item.get("thread_id") or "").strip()
+        title = str(item.get("title") or "Unknown Title").strip()
+        key = thread_id or title.casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        results.append({
+            "source_type": "f95zone",
+            "source_id": thread_id,
+            "title": title,
+            "version": item.get("version", ""),
+            "creator": item.get("creator", "Unknown Developer"),
+            "cover": item.get("cover", ""),
+            "url": f"https://f95zone.to/threads/{thread_id}/" if thread_id else "",
+        })
+
+    results.sort(key=lambda item: _rank_f95zone_result(query, item))
+    return results[:15]
 
 def search_dlsite(query: str) -> List[Dict[str, Any]]:
     if not query or len(query.strip()) < 2:

@@ -116,7 +116,7 @@ class LibraryPortabilityTests(unittest.TestCase):
             self.assertTrue(manifest["games"][0]["local_version_is_manual"])
             self.assertTrue(manifest["games"][0]["title_is_manual"])
 
-    def test_write_export_bundle_embeds_manifest_and_library_contents(self):
+    def test_write_export_bundle_embeds_only_manifest_and_no_library_file_payload(self):
         portability = self._load_module()
         self.assertTrue(
             hasattr(portability, "write_export_bundle"),
@@ -148,8 +148,8 @@ class LibraryPortabilityTests(unittest.TestCase):
                 names = set(bundle.namelist())
 
             self.assertIn("manifest.json", names)
-            self.assertIn("library/Series/Example Game/run.exe", names)
-            self.assertIn("library/Loose.zip", names)
+            self.assertNotIn("library/Series/Example Game/run.exe", names)
+            self.assertNotIn("library/Loose.zip", names)
 
     def test_resolve_import_destination_blocks_path_traversal(self):
         portability = self._load_module()

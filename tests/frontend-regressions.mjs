@@ -3,6 +3,7 @@ import fs from 'fs';
 const html = fs.readFileSync('frontend/index.html', 'utf8');
 const js = fs.readFileSync('frontend/static/js/app.js', 'utf8');
 const css = fs.readFileSync('frontend/static/css/styles.css', 'utf8');
+const desktopEntry = fs.readFileSync('app.py', 'utf8');
 
 function assert(condition, message) {
   if (!condition) {
@@ -25,6 +26,13 @@ test('splash status id matches the JavaScript lookup', () => {
   assert(
     html.includes('id="splash-status"'),
     'Expected frontend/index.html to expose id="splash-status" for the startup label.',
+  );
+});
+
+test('desktop launcher cache-busts the root document on every startup', () => {
+  assert(
+    desktopEntry.includes('APP_URL =') && desktopEntry.includes('int(time.time())'),
+    'Expected each desktop launch to use a fresh root-page URL so WebView cannot reuse stale HTML and asset references.',
   );
 });
 
@@ -56,7 +64,7 @@ test('game overview exposes complete version update controls', () => {
 
 test('game overview ships version-panel styling under a fresh stylesheet revision', () => {
   assert(
-    html.includes('static/css/styles.css?v=12'),
+    html.includes('static/css/styles.css?v=17'),
     'Expected the overview layout and version-panel styles to use a fresh stylesheet revision so the desktop WebView cannot reuse the pre-panel CSS.',
   );
   assert(
@@ -954,6 +962,59 @@ test('library toolbar exposes restorable refresh-all metadata progress and cance
   assert(js.includes('/cancel'), 'Expected tracked library jobs to support cancellation.');
   assert(/Game\s*\$\{[^}]+\}\s*\/\s*\$\{[^}]+\}/.test(js) || html.includes('Game 0 / 0'), 'Expected current/total per-game progress.');
   assert(js.includes('refreshLibraryStateAfterJob'), 'Expected completed jobs to refresh cards, stats, and an open overview.');
+});
+
+test('library toolbar keeps an even border inset and one-line control sizing', () => {
+  assert(
+    /\.content-toolbar\s*\{[^}]*min-height:\s*64px;[^}]*height:\s*auto;[^}]*padding:\s*10px 16px;/s.test(css),
+    'Expected the Library toolbar to reserve an even vertical inset around its controls instead of clipping them against the border.',
+  );
+  assert(
+    /\.content-toolbar\s+:is\(#search-input,\s*\.sort-select,\s*\.btn-primary,\s*\.btn-secondary\)\s*\{[^}]*height:\s*38px;/s.test(css),
+    'Expected Library toolbar inputs, selects, and buttons to share a compact 38px height.',
+  );
+  assert(
+    /\.content-toolbar\s+\.btn-primary span,\s*\.content-toolbar\s+\.btn-secondary span\s*\{[^}]*white-space:\s*nowrap;/s.test(css),
+    'Expected Library toolbar action labels to stay on one line instead of making the buttons oversized.',
+  );
+});
+
+test('library toolbar responds to its available content width before controls can overlap', () => {
+  assert(
+    css.includes('container-type: inline-size;'),
+    'Expected the Library content pane to establish an inline-size container so the sidebar-reduced toolbar width drives its layout.',
+  );
+  assert(
+    css.includes('@container (max-width: 1200px)') &&
+      css.includes('flex-basis: 100%;') &&
+      css.includes('.toolbar-actions { width: 100%; }'),
+    'Expected a content-width breakpoint to move the search field and toolbar actions onto separate rows before they collide.',
+  );
+});
+
+test('library toolbar has a WebView-compatible viewport fallback', () => {
+  assert(
+    /@media\s*\(max-width:\s*1500px\)\s*\{\s*\.content-toolbar\s*\{[^}]*flex-wrap:\s*wrap;[^}]*\}\s*\.search-box\s*\{[^}]*flex:\s*0 0 100%;[^}]*\}\s*\.toolbar-actions\s*\{[^}]*flex:\s*0 0 100%;[^}]*\}\s*\}/s.test(css),
+    'Expected the 1500px WebView fallback to stack the toolbar at XDir default window width.',
+  );
+});
+
+test('companion settings card actions use the same inset as its bordered field rows', () => {
+  assert(
+    html.includes('settings-card-actions'),
+    'Expected the Companion footer actions to have a dedicated card-action class.',
+  );
+  assert(
+    css.includes('.settings-card-actions {') &&
+      css.includes('margin: 0;') &&
+      css.includes('padding: 12px 18px 16px;'),
+    'Expected Companion actions to replace the generic top margin with consistent horizontal and bottom card insets.',
+  );
+  assert(
+    html.includes('settings-card-queue') &&
+      /\.settings-card-queue\s*\{[^}]*padding:\s*12px 18px 0;/s.test(css),
+    'Expected the bordered Companion queue surface to share the footer horizontal inset instead of touching the card border.',
+  );
 });
 
 test('version and update controls render backend state without prompt dialogs', () => {

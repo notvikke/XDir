@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="static/css/styles.css?v=12">
+    <link rel="stylesheet" href="static/css/styles.css?v=17">
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @keyframes splashLoading {
@@ -408,8 +408,8 @@
                             <div class="settings-field-row"><div><span class="settings-row-label">Extension version</span><p id="settings-extension-version">Not reported</p></div><div><span class="settings-row-label">Last heartbeat</span><p id="settings-extension-heartbeat">Never</p></div></div>
                             <div class="settings-field-row settings-field-row-stack"><div><span class="settings-row-label">Extension folder</span><p>Load this path as an unpacked extension when the companion is offline.</p></div><div class="path-box" id="settings-extension-path">Waiting for extension path...</div></div>
                             <div class="settings-field-row"><div><span class="settings-row-label">Metadata queue</span><p id="settings-metadata-queue-detail">Actionable games missing cover art or screenshots.</p></div><strong id="settings-metadata-queue-count">0</strong></div>
-                            <div class="settings-queue-list" id="settings-metadata-queue-list"><div class="settings-queue-empty">Loading metadata queue...</div></div>
-                            <div class="version-action-row">
+                            <div class="settings-queue-list settings-card-queue" id="settings-metadata-queue-list"><div class="settings-queue-empty">Loading metadata queue...</div></div>
+                            <div class="version-action-row settings-card-actions">
                                 <button class="btn-secondary" id="btn-settings-open-extension-tab"><i data-lucide="external-link"></i><span>Open Extension View</span></button>
                                 <button class="btn-secondary" id="btn-settings-open-extension-folder"><i data-lucide="folder-open"></i><span>Open Folder</span></button>
                                 <button class="btn-ghost" id="btn-settings-copy-extension-path"><i data-lucide="copy"></i><span>Copy Path</span></button>
@@ -422,7 +422,7 @@
                         <div class="settings-job-progress" id="settings-job-progress" hidden><div class="settings-job-progress-top"><div class="settings-job-progress-copy"><span class="settings-job-progress-kicker">Background job</span><strong id="settings-job-progress-label">Processing library metadata...</strong></div><div class="settings-job-progress-meta"><span id="settings-job-progress-count">0 / 0</span><span id="settings-job-progress-percent">0%</span></div></div><div class="settings-job-progress-track"><div class="settings-job-progress-fill" id="settings-job-progress-fill"></div></div><div class="settings-job-progress-current" id="settings-job-progress-current">Waiting for backend job...</div><button class="btn-secondary" id="btn-settings-cancel-job" type="button" hidden><i data-lucide="x"></i><span>Cancel Job</span></button></div>
                         <div class="settings-form-card">
                             <div class="settings-field-row"><div><span class="settings-row-label">Check game updates</span><p>Compare local versions with every supported linked source.</p></div><button class="btn-secondary" id="btn-settings-check-updates"><i data-lucide="search-check"></i><span>Check Updates</span></button></div>
-                            <div class="settings-field-row"><div><span class="settings-row-label">Portable library backup</span><p>Export or import metadata for the configured games directory without moving installed game files.</p></div><div class="version-action-row"><button class="btn-secondary" id="btn-settings-export-library"><i data-lucide="download"></i><span>Export</span></button><button class="btn-secondary" id="btn-settings-import-library"><i data-lucide="upload"></i><span>Import</span></button></div></div>
+                            <div class="settings-field-row"><div><span class="settings-row-label">Portable library backup</span><p>Export or import the library database, source links, and saved metadata for the configured games directory without copying or moving your installed game files.</p></div><div class="version-action-row"><button class="btn-secondary" id="btn-settings-export-library"><i data-lucide="download"></i><span>Export</span></button><button class="btn-secondary" id="btn-settings-import-library"><i data-lucide="upload"></i><span>Import</span></button></div></div>
                             <div class="settings-field-row"><div><span class="settings-row-label">Repair titles and metadata</span><p>Rebuild display metadata for existing records.</p></div><button class="btn-secondary" id="btn-fix-metadata"><i data-lucide="wand-2"></i><span>Run Repair</span></button></div>
                             <div class="settings-field-row"><div><span class="settings-row-label">Rematch unidentified F95Zone entries</span><p>Legacy targeted repair for unresolved F95Zone records.</p></div><button class="btn-secondary" id="btn-rematch-f95"><i data-lucide="search"></i><span>Run Rematch</span></button></div>
                         </div>
@@ -1111,5 +1111,3 @@
     <script src="static/js/app.js?v=7"></script>
 </body>
 </html>
-
-

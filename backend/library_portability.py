@@ -230,29 +230,13 @@ def write_export_bundle(
 ) -> Path:
     bundle_path = _normalize_export_path(export_path)
     bundle_path.parent.mkdir(parents=True, exist_ok=True)
-    root = Path(games_root).expanduser().resolve()
-    members = _iter_library_members(root)
-    total = len(members) + 1
 
     with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as bundle:
         bundle.writestr(MANIFEST_FILENAME, json.dumps(manifest, indent=2, ensure_ascii=False))
         if progress_callback:
-            progress_callback(1, total, MANIFEST_FILENAME, "Writing portable library manifest...")
-
-        for index, member in enumerate(members, start=2):
-            relative_name = member.relative_to(root).as_posix()
-            archive_name = f"{LIBRARY_ARCHIVE_ROOT}/{relative_name}"
-            if member.is_dir():
-                directory_name = archive_name.rstrip("/") + "/"
-                info = zipfile.ZipInfo(directory_name)
-                bundle.writestr(info, "")
-            else:
-                bundle.write(member, archive_name)
-            if progress_callback:
-                progress_callback(index, total, relative_name, "Packing library files and folders...")
+            progress_callback(1, 1, MANIFEST_FILENAME, "Writing portable library metadata manifest...")
 
     return bundle_path
-
 
 def load_export_bundle_manifest(export_path: str | os.PathLike[str]) -> dict[str, Any]:
     with zipfile.ZipFile(export_path, "r") as bundle:

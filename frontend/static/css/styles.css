@@ -688,11 +688,13 @@ textarea {
 /* Library Main Area */
 .library-content {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     height: 100%;
     overflow: hidden;
     background-color: var(--bg-main);
+    container-type: inline-size;
 }
 
 .library-directory-list {
@@ -799,18 +801,24 @@ textarea {
 }
 
 .content-toolbar {
-    height: 56px;
-    padding: 0 24px;
+    min-height: 64px;
+    height: auto;
+    padding: 10px 16px;
+    gap: 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     border-bottom: 1px solid var(--border-dark);
     flex-shrink: 0;
+    box-sizing: border-box;
 }
 
 .search-box {
     position: relative;
     width: 360px;
+    min-width: 260px;
+    max-width: 360px;
+    flex: 1 1 360px;
 }
 
 .search-icon {
@@ -855,7 +863,27 @@ textarea {
 .toolbar-actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    justify-content: flex-end;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.content-toolbar :is(#search-input, .sort-select, .btn-primary, .btn-secondary) {
+    height: 38px;
+    box-sizing: border-box;
+}
+
+.content-toolbar .btn-primary,
+.content-toolbar .btn-secondary {
+    flex-shrink: 0;
+    padding: 0 12px;
+    justify-content: center;
+}
+
+.content-toolbar .btn-primary span,
+.content-toolbar .btn-secondary span {
+    white-space: nowrap;
 }
 
 .scan-toolbar-progress {
@@ -931,6 +959,7 @@ textarea {
     font-size: 0.85rem;
     color: var(--text-muted);
     font-weight: 600;
+    white-space: nowrap;
 }
 
 .sort-select {
@@ -943,6 +972,44 @@ textarea {
     font-size: 0.85rem;
     outline: none;
     cursor: pointer;
+}
+
+@container (max-width: 1200px) {
+    .content-toolbar {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .search-box {
+        width: 100%;
+        max-width: none;
+        flex: 0 0 100%;
+    }
+
+    .toolbar-actions {
+        width: 100%;
+        flex: 0 0 100%;
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 1500px) {
+    .content-toolbar {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .search-box {
+        width: 100%;
+        max-width: none;
+        flex: 0 0 100%;
+    }
+
+    .toolbar-actions {
+        width: 100%;
+        flex: 0 0 100%;
+        flex-wrap: wrap;
+    }
 }
 
 .btn-primary {
@@ -4570,6 +4637,13 @@ input:checked + .slider:before { transform: translateX(22px); }
 .version-details dt { color: var(--text-muted); font-size: 0.72rem; }
 .version-details dd { margin-top: 4px; color: var(--text-light); font-size: 0.86rem; overflow-wrap: anywhere; }
 .version-action-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.settings-card-actions {
+    margin: 0;
+    padding: 12px 18px 16px;
+}
+.settings-card-queue {
+    padding: 12px 18px 0;
+}
 .local-version-editor { margin-top: 12px; padding: 14px; border: 1px solid rgba(96, 165, 250, 0.24); border-radius: var(--radius-md); background: rgba(30, 64, 175, 0.08); }
 .local-version-editor[hidden] { display: none; }
 .local-version-editor label { display: block; margin-bottom: 7px; font-size: 0.82rem; font-weight: 650; }
@@ -4606,7 +4680,11 @@ input:checked + .slider:before { transform: translateX(22px); }
 @media (max-width: 1000px) {
     .settings-sidebar { width: 230px; }
     .settings-content { padding: 22px; }
-    .content-toolbar { align-items: flex-start; }
+    .content-toolbar {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+    .search-box { width: 100%; max-width: none; flex-basis: 100%; }
     .toolbar-actions { width: 100%; }
     .scan-toolbar-progress { max-width: 100%; }
 }
@@ -4637,4 +4715,3 @@ input:checked + .slider:before { transform: translateX(22px); }
         transition-duration: 0.01ms !important;
     }
 }
-

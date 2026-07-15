@@ -1,8 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_submodules
-
-hiddenimports = collect_submodules('webview') + [
+hiddenimports = [
+    'webview.platforms.winforms',
+    'webview.platforms.win32',
+    'webview.platforms.edgechromium',
+    'webview.platforms.mshtml',
     'clr',
     'pythonnet',
 ]
@@ -21,7 +23,26 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'webview.platforms.android',
+        'webview.platforms.cocoa',
+        'webview.platforms.gtk',
+        'webview.platforms.qt',
+        'webview.platforms.cef',
+        'PySide6',
+        'PyQt5',
+        'PyQt6',
+        'qtpy',
+        'tkinter',
+        'IPython',
+        'jedi',
+        'pytest',
+        '_pytest',
+        'numpy',
+        'PIL',
+        'psycopg2',
+        'MySQLdb',
+    ],
     noarchive=False,
     optimize=0,
 )

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 - 2026-07-15
+
+- Overhauled the desktop interface with a cohesive blue visual system, denser library cards, responsive toolbar behavior, and polished settings and overview surfaces
+- Added richer library workflows for launch/playtime tracking, version checks, metadata refresh jobs, wishlist linking, and missing-source review
+- Improved F95Zone title search with normalized fallback queries and stronger partial-title ranking for noisy local game names
+- Made portable library export/import metadata-only so backups preserve source links and saved metadata without copying installed game files
+- Added a per-user Windows setup executable alongside the portable ZIP for straightforward installation without administrator access
+
 ## 0.2.0 - 2026-07-08
 
 - Revamped the settings experience around real library defaults, source preference, maintenance actions, and extension health

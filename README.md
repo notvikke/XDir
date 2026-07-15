@@ -56,19 +56,21 @@ python app.py --server-only
 
 ## Windows release build
 
-Build the packaged executable with:
+Build the Windows packages with Python, PyInstaller, and Inno Setup 6 installed:
 
 ```powershell
 build-windows-release.bat
 ```
 
-The packaged executable is produced at:
+The release build produces:
 
 ```text
 dist\XDir\XDir.exe
+dist\XDir-0.3.0-windows.zip
+dist\XDir-0.3.0-setup.exe
 ```
 
-Release uploads should ship the full packaged folder as a `.zip`, because the executable depends on adjacent bundled runtime files.
+The setup executable is the recommended install path and installs per-user without administrator access. Portable users should extract the full ZIP before launching `XDir.exe`, because it depends on the adjacent bundled runtime files.
 
 ## Browser extension
 

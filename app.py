@@ -18,7 +18,7 @@ if sys.stderr is None:
 
 PORT = 8765
 SERVER_URL = f"http://127.0.0.1:{PORT}/"
-APP_URL = SERVER_URL + "?v=12"
+APP_URL = SERVER_URL + f"?v={int(time.time())}"
 APP_USER_MODEL_ID = "XDir.Library"
 APP_ICON_RELATIVE_PATH = os.path.join("extension", "icon128.png")
 APP_ROOT = get_app_root()

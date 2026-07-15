@@ -12,6 +12,8 @@ const specFile = fs.readFileSync('XDir.spec', 'utf8');
 const runtimePy = fs.readFileSync('backend/runtime.py', 'utf8');
 const versioningPy = fs.readFileSync('backend/versioning.py', 'utf8');
 const scraperPy = fs.readFileSync('backend/scraper.py', 'utf8');
+const windowsBuildScript = fs.readFileSync('build-windows-release.bat', 'utf8');
+const installerFile = fs.existsSync('XDir.iss') ? fs.readFileSync('XDir.iss', 'utf8') : '';
 
 function assert(condition, message) {
   if (!condition) {
@@ -375,8 +377,29 @@ test('windows packaging config exists for generating a branded exe release', () 
     'Expected the release build to bundle the frontend and extension assets.',
   );
   assert(
+    !specFile.includes("collect_submodules('webview')") &&
+      specFile.includes("'webview.platforms.winforms'") && specFile.includes("'webview.platforms.edgechromium'") &&
+      specFile.includes('excludes=[') && specFile.includes("'webview.platforms.qt'") &&
+      specFile.includes("'PySide6'") && specFile.includes("'psycopg2'"),
+    'Expected the Windows bundle to include only pywebview Windows renderers instead of every optional GUI backend installed on the build machine.',
+  );
+  assert(
     specFile.includes('upx=False'),
     'Expected the Windows release build to avoid UPX compression because it can hurt first-launch startup time and trigger extra scanning.',
+  );
+  assert(
+    installerFile.includes('DefaultDirName={localappdata}\\Programs\\XDir') &&
+      installerFile.includes('PrivilegesRequired=lowest'),
+    'Expected a non-admin per-user installer so the packaged app can persist its local database beside the executable.',
+  );
+  assert(
+    installerFile.includes('Source: "dist\\XDir\\*"') && installerFile.includes('Filename: "{app}\\XDir.exe"'),
+    'Expected the installer to package the complete PyInstaller folder and launch XDir from the installed location.',
+  );
+  assert(
+    windowsBuildScript.includes('XDir.iss') && windowsBuildScript.includes('ISCC') &&
+      windowsBuildScript.includes('%LOCALAPPDATA%\\Programs\\Inno Setup 6\\ISCC.exe'),
+    'Expected the Windows release script to compile the setup executable after the portable package.',
   );
 });
 
@@ -686,6 +709,18 @@ test('library portability routes expose tracked export/import jobs and native de
   assert(
     fs.existsSync('backend/library_portability.py'),
     'Expected a dedicated backend/library_portability.py module for portable library export/import helpers.',
+  );
+  assert(
+    !mainPy.includes('extract_export_bundle('),
+    'Expected metadata-only import to stop extracting packaged library files into the configured directory.',
+  );
+  assert(
+    !frontendJs.includes('Packaging your primary library directory'),
+    'Expected settings export copy to stop implying that the full library directory is duplicated into the export.',
+  );
+  assert(
+    frontendHtml.includes('without copying or moving your installed game files'),
+    'Expected settings copy to state clearly that portable export/import only moves the metadata database and source links.',
   );
 });
 

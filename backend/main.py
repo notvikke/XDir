@@ -1,6 +1,5 @@
 import os
 import subprocess
-import zipfile
 from datetime import datetime
 from threading import Lock, Thread
 from typing import List, Optional, Dict, Any
@@ -18,7 +17,6 @@ from backend.ingest import run_ingestion, determine_source_info, merge_game_reco
 from backend.config import get_settings, save_settings, get_games_dir, get_games_dirs, is_path_within_games_dirs
 from backend.library_portability import (
     build_export_manifest,
-    extract_export_bundle,
     load_export_bundle_manifest,
     needs_metadata_refresh,
     resolve_import_destination,
@@ -56,7 +54,7 @@ from backend.versioning import (
     utc_now,
 )
 
-app = FastAPI(title="XDir API", version="0.2.0")
+app = FastAPI(title="XDir API", version="0.3.0")
 APP_ROOT = get_app_root()
 BUNDLE_ROOT = get_bundle_root()
 EXTENSION_DIR = os.path.join(BUNDLE_ROOT, "extension")
@@ -238,24 +236,12 @@ def parse_datetime_value(value: Any) -> datetime | None:
 
 
 def count_library_export_work_units(games_root: Path) -> int:
-    if not games_root.exists() or not games_root.is_dir():
-        return 1
-
-    total = 1
-    for _, dir_names, file_names in os.walk(games_root):
-        total += len(dir_names) + len(file_names)
-    return max(1, total)
+    return 1
 
 
 def count_library_import_work_units(import_path: Path) -> int:
     manifest = load_export_bundle_manifest(import_path)
-    with zipfile.ZipFile(import_path, "r") as bundle:
-        member_count = sum(
-            1
-            for info in bundle.infolist()
-            if info.filename.startswith("library/") and info.filename != "library/"
-        )
-    return max(1, member_count + len(manifest.get("games", [])))
+    return max(1, len(manifest.get("games", [])))
 
 
 def find_game_for_import_record(db: Session, record: dict[str, Any], destination_path: Path | None = None) -> Game | None:
@@ -1533,7 +1519,7 @@ import time
 EXTENSION_STATUS = {"connected": False, "last_ping": 0, "version": "Unknown", "last_sync_trigger": 0}
 
 class ExtensionPingPayload(BaseModel):
-    version: Optional[str] = "0.2.0"
+    version: Optional[str] = "0.3.0"
 
 @app.post("/api/extension/ping")
 def ping_extension(payload: ExtensionPingPayload):
@@ -1592,7 +1578,7 @@ def run_library_export_job(export_path: str):
         )
         finish_job(
             EXPORT_LIBRARY_JOB_KEY,
-            f"Exported {len(manifest.get('games', []))} library entries and packaged {games_root} to {bundle_path}.",
+            f"Exported {len(manifest.get('games', []))} library records, source links, and user metadata to {bundle_path}.",
         )
     except Exception as exc:
         fail_job(EXPORT_LIBRARY_JOB_KEY, str(exc))
@@ -1608,25 +1594,7 @@ def run_library_import_job(import_path: str):
         package_path = Path(import_path).expanduser().resolve()
         manifest = load_export_bundle_manifest(package_path)
         games_root = get_games_dir().resolve()
-        extraction_units = 0
-        with zipfile.ZipFile(package_path, "r") as bundle:
-            extraction_units = sum(
-                1
-                for info in bundle.infolist()
-                if info.filename.startswith("library/") and info.filename != "library/"
-            )
-
-        extraction_stats = extract_export_bundle(
-            package_path,
-            games_root,
-            progress_callback=lambda completed, total, current_name, detail: update_job(
-                IMPORT_LIBRARY_JOB_KEY,
-                completed,
-                current_name,
-                detail,
-            ),
-        )
-        current_step = extraction_units
+        current_step = 0
 
         merged_source_entries = merge_source_map_data(manifest.get("source_map"))
 
@@ -1663,7 +1631,9 @@ def run_library_import_job(import_path: str):
             if record_file_type != "wishlist":
                 relative_path = record.get("relative_path")
                 if relative_path:
-                    destination_path = resolve_import_destination(games_root, relative_path)
+                    candidate_path = resolve_import_destination(games_root, relative_path)
+                    if candidate_path.exists():
+                        destination_path = candidate_path
                 else:
                     absolute_folder_path = str(record.get("folder_path") or "").strip()
                     if absolute_folder_path and is_path_within_games_dirs(absolute_folder_path):
@@ -1680,7 +1650,7 @@ def run_library_import_job(import_path: str):
                         IMPORT_LIBRARY_JOB_KEY,
                         current_step,
                         str(record.get("title") or record.get("raw_name") or "Skipped local entry"),
-                        "Skipping a local record whose files are not available in the imported primary root or configured extra roots.",
+                        "Skipping a local record because its folder or archive is not available in the currently configured library folders.",
                     )
                     continue
 
@@ -1726,9 +1696,6 @@ def run_library_import_job(import_path: str):
             IMPORT_LIBRARY_JOB_KEY,
             result={
                 "input_path": str(package_path),
-                "extracted_files": extraction_stats.get("extracted_files", 0),
-                "skipped_files": extraction_stats.get("skipped_files", 0),
-                "created_dirs": extraction_stats.get("created_dirs", 0),
                 "imported_records": imported_records,
                 "skipped_records": skipped_records,
                 "metadata_refreshed": metadata_refreshed,
@@ -1740,17 +1707,15 @@ def run_library_import_job(import_path: str):
         )
         finish_job(
             IMPORT_LIBRARY_JOB_KEY,
-            "Imported portable library package into the configured games directory. "
-            f"Restored {imported_records} records, extracted {extraction_stats.get('extracted_files', 0)} files, "
-            f"skipped {extraction_stats.get('skipped_files', 0)} existing files, refreshed metadata for {metadata_refreshed} games, "
-            f"and merged {merged_source_entries} durable source snapshots.",
+            "Imported portable library metadata into the configured library. "
+            f"Restored {imported_records} records, skipped {skipped_records} records whose local paths were unavailable, "
+            f"refreshed metadata for {metadata_refreshed} games, and merged {merged_source_entries} durable source snapshots.",
         )
     except Exception as exc:
         bg_db.rollback()
         fail_job(IMPORT_LIBRARY_JOB_KEY, str(exc))
     finally:
         bg_db.close()
-
 
 def run_rematch_f95zone_job():
     from backend.scraper import rematch_and_scrape_f95zone
